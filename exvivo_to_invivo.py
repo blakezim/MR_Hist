@@ -25,18 +25,14 @@ import CAMP.StructuredGridOperators as so
 # import matplotlib.pyplot as plt
 # plt.ion()
 
-device = 'cuda:3'
+device = 'cuda:1'
 
 
 def affine(tar_surface, src_surface, affine_lr=1.0e-07, translation_lr=1.0e-06, converge=1.0,
            spatial_sigma=[20.0], device='cpu'):
 
-    init_translation = torch.tensor([0.0, 0.0, 0.0], device=device)
-    init_affine = torch.tensor([
-        [0, -1, 0],
-        [1, 0, 0],
-        [0, 0, -1]
-    ], device=device).float()
+    init_translation = tar_surface.vertices.mean(0) - src_surface.vertices.mean(0)
+    init_affine = torch.eye(3, device=device).float()
 
     for sigma in spatial_sigma:
 
@@ -211,10 +207,9 @@ def deformable_register(tar_surface, src_surface, spatial_sigma=[0.5], deformabl
 
 
 def register(rabbit):
-    target_file = '/home/sci/blakez/ucair/18_047/rawVolumes/ExVivo_2018-07-26/Exvivo_surface_decimate.obj'
-    source_file = '/home/sci/blakez/ucair/18_047/rawVolumes/ExVivo_2018-07-26/exterior_surface_decimate_18_047.obj'
-
-    save_dir = str.join('/', target_file.split('/')[:-1])
+    target_file = '/home/sci/blakez/ucair/18_047/rawVolumes/ExVivo_2018-07-26/T2_Ablation_Decimate_Exvivo.obj'
+    source_file = '/home/sci/blakez/ucair/18_047/rawVolumes/PostImaging_2018-07-02/T2_Ablation_Decimate.obj'
+    save_dir = '/hdscratch/ucair/18_047/mri/invivo/'
 
     verts, faces = io.ReadOBJ(source_file)
     src_surface = core.TriangleMesh(verts, faces)
@@ -223,26 +218,24 @@ def register(rabbit):
     verts, faces = io.ReadOBJ(target_file)
     tar_surface = core.TriangleMesh(verts, faces)
     tar_surface.to_(device=device)
-    tar_surface.flip_normals_()
 
     print('Starting Affine ... ')
     # Load or create the dictionary for registration
     try:
-        with open(f'{save_dir}/affine_config.yaml', 'r') as f:
+        with open(f'{save_dir}surfaces/raw/affine_config.yaml', 'r') as f:
             params = yaml.load(f, Loader=yaml.FullLoader)
     except IOError:
         params = {
             'spatial_sigma': [20.0],
-            'affine_lr': 1.0e-07,
-            'translation_lr': 1.0e-06,
+            'affine_lr': 1.0e-08,
+            'translation_lr': 1.0e-05,
             'converge': 1.0
         }
 
     try:
-        aff = np.loadtxt(f'{save_dir}/blocks_to_exvivo_affine.txt')
+        aff = np.loadtxt(f'{save_dir}surfaces/raw/invivo_to_exvivo_affine.txt')
         aff = torch.tensor(aff, device=device)
     except IOError:
-
         aff = affine(
             tar_surface.copy(),
             src_surface.copy(),
@@ -253,14 +246,15 @@ def register(rabbit):
             device=device
         )
         # Save out the parameters:
-        with open(f'{save_dir}/affine_config.yaml', 'w') as f:
+        with open(f'{save_dir}surfaces/raw/affine_config.yaml', 'w') as f:
             yaml.dump(params, f)
-        np.savetxt(f'{save_dir}/blocks_to_exvivo_affine.txt', aff.cpu().numpy())
+        np.savetxt(f'{save_dir}surfaces/raw/invivo_to_exvivo_affine.txt', aff.cpu().numpy())
 
     aff_tfrom = uo.AffineTransformSurface.Create(aff, device=device)
     aff_source = aff_tfrom(src_surface)
 
-    io.WriteOBJ(aff_source.vertices, aff_source.indices, f'{save_dir}/affine_blocks_{rabbit}.obj')
+    io.WriteOBJ(aff_source.vertices, aff_source.indices,
+                f'{save_dir}surfaces/affine/invivo_to_exvivo_{rabbit}_affine.obj')
 
     print('Starting Deformable ... ')
     try:
@@ -268,34 +262,98 @@ def register(rabbit):
             params = yaml.load(f, Loader=yaml.FullLoader)
     except IOError:
         params = {
-            'spatial_sigma': [5.0, 0.5],
-            'smoothing_sigma': [20.0, 20.0, 20.0],
+            'spatial_sigma': [5.0, 2.0],
+            'smoothing_sigma': [100.0, 100.0, 100.0],
             'deformable_lr': 1.0e-04,
-            'converge': 8.0,
-            'rigid_transform': True,
-            'phi_inv_size': [38, 38, 38]
+            'converge': 1.0,
+            'phi_inv_size': [54, 54, 54]
         }
 
     def_surface, phi_inv = deformable_register(
         tar_surface.copy(),
         aff_source.copy(),
-        deformable_lr =params['deformable_lr'],
+        deformable_lr = params['deformable_lr'],
         converge=params['converge'],
         spatial_sigma=params['spatial_sigma'],
         smoothing_sigma=params['smoothing_sigma'],
         device=device,
         phi_inv_size=params['phi_inv_size'],
-        phi_device='cuda:2'
+        phi_device='cuda:0'
     )
 
     # Save out the parameters:
-    with open(f'{save_dir}/deformable_config.yaml', 'w') as f:
+    with open(f'{save_dir}surfaces/raw/deformable_config.yaml', 'w') as f:
         yaml.dump(params, f)
 
-    io.SaveITKFile(phi_inv, f'{save_dir}/block_phi_inv.mhd')
-    io.WriteOBJ(def_surface.vertices, def_surface.indices, f'{save_dir}/deformable_blocks_{rabbit}.obj')
+    io.SaveITKFile(phi_inv, f'{save_dir}volumes/deformable/invivo_phi_inv.mhd')
+    io.WriteOBJ(def_surface.vertices, def_surface.indices,
+                f'{save_dir}surfaces/deformable/invivo_to_exvivo_deformable.obj')
+
+
+def apply_to_images(rabbit):
+
+    affine = False
+    data_dir = '/hdscratch/ucair/18_047/mri/invivo/'
+
+    # Load in the file to be deformed
+    ce_t1 = io.LoadITKFile(
+        '/home/sci/blakez/ucair/18_047/rawVolumes/PostImaging_2018-07-02/012_----_3D_VIBE_0.5x0.5x1_NoGrappa_3avg_fatsat_cor.nii.gz',
+        device=device
+    )
+    t2_motion = io.LoadITKFile(
+        '/home/sci/blakez/ucair/18_047/elastVolumes/day3_motion/008_m--e_t2_spc_1mm_iso_cor.nii.gz',
+        device=device
+    )
+
+    label = io.LoadITKFile(
+        '/home/sci/blakez/ucair/18_047/rawVolumes/PostImaging_2018-07-02/T2_ablation_segmentation.nrrd',
+        device=device
+    )
+
+    # Load the deformation field
+    phi_inv = io.LoadITKFile(
+        f'{data_dir}volumes/deformable/invivo_phi_inv.mhd', device=device
+    )
+    phi_inv.set_size((256, 256, 256))
+    if affine:
+        phi_inv.set_to_identity_lut_()
+    phi_inv.data = phi_inv.data.flip(0)
+
+    # Load the affine
+    aff = np.loadtxt(f'{data_dir}surfaces/raw/invivo_to_exvivo_affine.txt')
+    aff = torch.tensor(aff, device=device, dtype=torch.float32)
+
+    # Apply the inverse affine to the grid
+    aff = aff.inverse()
+    a = aff[0:3, 0:3].float()
+    t = aff[-0:3, 3].float()
+
+    phi_inv.data = torch.matmul(a.unsqueeze(0).unsqueeze(0),
+                                phi_inv.data.permute(list(range(1, 3 + 1)) + [0]).unsqueeze(-1))
+    phi_inv.data = (phi_inv.data.squeeze() + t).permute([-1] + list(range(0, 3)))
+
+    # Flip phi_inv back to the way it was
+    phi_inv.data = phi_inv.data.flip(0)
+
+    if affine:
+        # Just apply the affine to the images
+        aff_ce_t1 = so.ApplyGrid.Create(phi_inv, pad_mode='zeros', device=device)(ce_t1, phi_inv)
+        aff_t2_motion = so.ApplyGrid.Create(phi_inv, pad_mode='zeros', device=device)(t2_motion, phi_inv)
+        aff_label = so.ApplyGrid.Create(phi_inv, pad_mode='zeros', device=device)(label, phi_inv)
+        io.SaveITKFile(aff_ce_t1, f'{data_dir}volumes/affine/invivo_to_exvivo_ce_t1_affine.mhd')
+        io.SaveITKFile(aff_t2_motion, f'{data_dir}volumes/affine/invivo_to_exvivo_t2_affine.mhd')
+        io.SaveITKFile(aff_label, f'{data_dir}volumes/affine/invivo_to_exvivo_label_affine.mhd')
+    else:
+        def_ce_t1 = so.ApplyGrid.Create(phi_inv, pad_mode='zeros', device=device)(ce_t1, phi_inv)
+        def_t2_motion = so.ApplyGrid.Create(phi_inv, pad_mode='zeros', device=device)(t2_motion, phi_inv)
+        def_label = so.ApplyGrid.Create(phi_inv, pad_mode='zeros', device=device)(label, phi_inv)
+        # Save out the deformed volumes
+        io.SaveITKFile(def_ce_t1, f'{data_dir}volumes/deformable/invivo_to_exvivo_ce_t1_deformable.mhd')
+        io.SaveITKFile(def_t2_motion, f'{data_dir}volumes/deformable/invivo_to_exvivo_t2_deformable.mhd')
+        io.SaveITKFile(def_label, f'{data_dir}volumes/deformable/invivo_to_exvivo_label_deformable.mhd')
 
 
 if __name__ == '__main__':
     rabbit = '18_047'
     register(rabbit)
+    apply_to_images(rabbit)

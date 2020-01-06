@@ -50,7 +50,100 @@ def block_stacking(rabbit):
     head_blocks = block_list[:block_list.index(middle_block) + 1][::-1]
 
     rerun = True
-    skip_blocks = ['block02', 'block03', 'block04', 'block05', 'block08', 'block09', 'block10', 'block11', 'block12']
+    # skip_blocks = ['block02', 'block03', 'block04', ]
+    # skip_blocks = ['block08', 'block05', 'block09', 'block10', 'block11', 'block12']
+    skip_blocks = []
+
+    # for i, block_path in enumerate(block_list):
+    #
+    #     block = block_path.split('/')[-1]
+    #     target_surface_path = f'{rabbit_dir}{block}{raw_ext}{block}_target_piece_surface.obj'
+    #     source_surface_path = f'{rabbit_dir}{block}{raw_ext}{block}_source_piece_surface.obj'
+    #
+    #     if block == 'block07':
+    #         continue
+    #
+    #     try:
+    #         verts, faces = io.ReadOBJ(target_surface_path)
+    #         tar_surface = core.TriangleMesh(verts, faces)
+    #         tar_surface.to_(device)
+    #     except IOError:
+    #         print(f'The target stitching surface for {block} was not found ... skipping')
+    #         continue
+    #
+    #     try:
+    #         verts, faces = io.ReadOBJ(source_surface_path)
+    #         src_surface = core.TriangleMesh(verts, faces)
+    #         src_surface.to_(device)
+    #         src_surface.flip_normals_()
+    #     except IOError:
+    #         print(f'The source stitching surface for {block} was not found ... skipping')
+    #         continue
+    #
+    #     extras_paths = [
+    #         f'{rabbit_dir}{block}{raw_ext}{block}_source_piece_ext.obj'
+    #     ]
+    #
+    #     # if i == 0:
+    #     #     extras_paths += [f'{rabbit_dir}{block}{raw_ext}{block}_foot.obj']
+    #     # elif i == len(block_list) - 1:
+    #     #     extras_paths += [f'{rabbit_dir}{block}{raw_ext}{block}_head.obj']
+    #     # else:
+    #     #     extras_paths += [f'{rabbit_dir}{block}{raw_ext}{block}_foot.obj']
+    #     #     extras_paths += [f'{rabbit_dir}{block}{raw_ext}{block}_head.obj']
+    #
+    #     extra_surfaces = []
+    #     for path in extras_paths:
+    #         try:
+    #             verts, faces = io.ReadOBJ(path)
+    #         except IOError:
+    #             extra_name = path.split('/')[-1]
+    #             print(f'{extra_name} not found as an extra ... removing from list')
+    #             _ = extras_paths.pop(extras_paths.index(path))
+    #             continue
+    #
+    #         extra_surfaces += [core.TriangleMesh(verts, faces)]
+    #         extra_surfaces[-1].to_(device)
+    #     # Load or create the dictionary for registration
+    #     try:
+    #         with open(f'{rabbit_dir}{block}{raw_ext}{block}_stitch_config.yaml', 'r') as f:
+    #             params = yaml.load(f, Loader=yaml.FullLoader)
+    #     except IOError:
+    #         params = {
+    #             'spatial_sigma': [1.0, 0.05],
+    #             'smoothing_sigma': [10.0, 10.0, 0.1],
+    #             'deformable_lr': [1.0e-04, 1.0e-04],
+    #             'converge': 0.01,
+    #             'rigid_transform': True,
+    #             'phi_inv_size': [25, 128, 128]
+    #         }
+    #     # Do the deformable registration
+    #     def_src_surface, def_extras, phi_inv = tools.deformable_register(
+    #         tar_surface.copy(),
+    #         src_surface.copy(),
+    #         deformable_lr=0.001,
+    #         spatial_sigma=params['spatial_sigma'],
+    #         phi_inv_size=params['phi_inv_size'],
+    #         smoothing_sigma=params['smoothing_sigma'],
+    #         src_excess=extra_surfaces,
+    #         converge=params['converge'],
+    #         device=device
+    #     )
+    #
+    #     # Save out the parameters:
+    #     with open(f'{rabbit_dir}{block}{raw_ext}{block}_stitch_config.yaml', 'w') as f:
+    #         yaml.dump(params, f)
+    #
+    #     # Save out all of the deformable transformed surfaces and phi inv
+    #     io.SaveITKFile(phi_inv, f'{rabbit_dir}{block}{vol_ext}{block}_phi_inv_stitch.mhd')
+    #     out_path = f'{rabbit_dir}{block}{raw_ext}{block}'
+    #     # if not os.path.exists(f'{out_path}_head_deformable.obj') or rerun:
+    #     io.WriteOBJ(def_src_surface.vertices, def_src_surface.indices, f'{out_path}_source_piece_surface_stitch.obj')
+    #
+    #     for extra_path, extra_surface in zip(extras_paths, def_extras):
+    #         name = extra_path.split('/')[-1].split(f'{block}')[-1].replace('.', '_stitch.')
+    #         if not os.path.exists(f'{out_path}{name}') or rerun:
+    #             io.WriteOBJ(extra_surface.vertices, extra_surface.indices, f'{out_path}{name}')
 
     # Loop over the foot blocks
     for i, block_path in enumerate(foot_blocks, 1):
@@ -69,7 +162,7 @@ def block_stacking(rabbit):
 
         extras_paths = [
             f'{rabbit_dir}{source_block}{raw_ext}{source_block}_decimate.obj',
-            f'{rabbit_dir}{source_block}{raw_ext}{source_block}_ext.obj'
+            f'{rabbit_dir}{source_block}{raw_ext}{source_block}_ext.obj',
         ]
 
         if i < len(foot_blocks) - 1:
@@ -180,17 +273,21 @@ def block_stacking(rabbit):
             params = {
                 'spatial_sigma': [5.0, 0.5],
                 'smoothing_sigma': [1.0, 1.0, 10.0],
-                'deformable_lr': 1.0e-04,
+                'deformable_lr': [1.0e-04],
                 'converge': 0.3,
                 'rigid_transform': True,
                 'phi_inv_size': [25, 128, 128]
             }
+
+        if type(params['deformable_lr']) is not list:
+            params['deformable_lr'] = [params['deformable_lr']] * len(params['spatial_sigma'])
 
         # Do the deformable registration
         def_surface, def_extras, phi_inv = tools.deformable_register(
             tar_surface.copy(),
             aff_src_surface.copy(),
             spatial_sigma=params['spatial_sigma'],
+            smoothing_sigma=params['smoothing_sigma'],
             deformable_lr=params['deformable_lr'],
             phi_inv_size=params['phi_inv_size'],
             src_excess=aff_extra_surface,
@@ -349,11 +446,15 @@ def block_stacking(rabbit):
                 'phi_inv_size': [20, 96, 96]
             }
 
+        if type(params['deformable_lr']) is not list:
+            params['deformable_lr'] = [params['deformable_lr']] * len(params['spatial_sigma'])
+
         # Do the deformable registration
         def_surface, def_extras, phi_inv = tools.deformable_register(
             tar_surface.copy(),
             aff_src_surface.copy(),
             spatial_sigma=params['spatial_sigma'],
+            smoothing_sigma=params['smoothing_sigma'],
             deformable_lr=params['deformable_lr'],
             phi_inv_size=params['phi_inv_size'],
             src_excess=aff_extra_surface,
@@ -376,198 +477,6 @@ def block_stacking(rabbit):
                 io.WriteOBJ(extra_surface.vertices, extra_surface.indices, f'{out_path}{name}')
 
     print('Done registering head blocks to middle block.')
-
-
-def match_bf_mic(mic_seged, blockface_seged, scales, steps, gauss=False):
-    # ds_blockface = so.ResampleWorld.Create(microscopic, device=device)(blockface)
-    # ds_blockface = (ds_blockface - ds_blockface.min()) / (ds_blockface.max() - ds_blockface.min())
-
-    # Can only do 1 channel
-    # microscopic.data = microscopic.data[0].unsqueeze(0)
-    # microscopic.channels = 1
-    # ds_blockface.data = ds_blockface.data[0].unsqueeze(0)
-    # ds_blockface.channels = 1
-
-    deformation = blockface_seged.clone()
-    deformation.set_to_identity_lut_()
-    deformation_list = []
-
-    # Create a grid composer
-    composer = so.ComposeGrids(device=device, dtype=torch.float32, padding_mode='border')
-
-    if gauss:
-        # Need do some blurring for the mic
-        gauss = so.Gaussian.Create(
-            channels=1,
-            kernel_size=25,
-            sigma=10,
-            device=device
-        )
-        #
-        mic_seged = gauss(mic_seged)
-
-    # Now need to variance equalize
-    # veq = so.VarianceEqualize.Create(
-    #     kernel_size=20,
-    #     sigma=10,
-    #     device=device
-    # )
-    #
-    # ve_mic = veq(mic_seged.clone())
-    # ve_block = veq(blockface_seged)
-
-    # Steps
-    for s in scales:
-
-        temp_mic = mic_seged.clone()
-        temp_block = blockface_seged.clone()
-
-        scale_source = temp_mic.set_size(mic_seged.size // s, inplace=False)
-        scale_target = temp_block.set_size(blockface_seged.size // s, inplace=False)
-        deformation = deformation.set_size(blockface_seged.size // s, inplace=False)
-
-        # Apply the deformation to the source image
-        scale_source = so.ApplyGrid(deformation)(scale_source)
-
-        operator = so.FluidKernel.Create(
-            scale_target,
-            device=device,
-            alpha=1.0,
-            beta=0.0,
-            gamma=0.001,
-        )
-
-        similarity = so.L2Similarity.Create(dim=2, device=device)
-
-        match = st.IterativeMatch.Create(
-            source=scale_source,
-            target=scale_target,
-            similarity=similarity,
-            operator=operator,
-            device=device,
-            step_size=steps[scales.index(s)],
-            incompressible=False
-        )
-
-        energy = [match.initial_energy]
-        print(f'Iteration: 0   Energy: {match.initial_energy}')
-        for i in range(1, 500):
-            energy.append(match.step())
-            print(f'Iteration: {i}   Energy: {energy[-1]}')
-
-            if i > 10 and np.mean(energy[-10:]) - energy[-1] < 0.001:
-                break
-
-        deformation = match.get_field()
-        deformation_list.append(deformation.clone().set_size(mic_seged.size, inplace=False))
-        deformation = composer(deformation_list[::-1])
-
-    # Compose the deformation fields
-    source_def = so.ApplyGrid(deformation, device=device)(mic_seged, deformation)
-
-    plt.figure()
-    plt.imshow(source_def[0].cpu().squeeze(), cmap='gray')
-    plt.colorbar()
-    plt.title('Deformed Image')
-    plt.figure()
-    plt.imshow(source_def[0].cpu().squeeze() - match.target[0].cpu().squeeze(), cmap='gray')
-    plt.colorbar()
-    plt.title('Difference With Target')
-
-    return source_def, deformation
-
-
-def process_mic(rabbit):
-
-    raw_mic_dir = f'/hdscratch/ucair/{rabbit}/microscopic/'
-    raw_bf_dir = f'/hdscratch/ucair/blockface/{rabbit}/'
-
-    block_list = sorted(glob.glob(f'{raw_mic_dir}/*'))
-
-    for block_path in block_list[10:]:
-        block = block_path.split('/')[-1]
-
-        mic_list = sorted(glob.glob(f'{block_path}/raw/*_image.tif'))
-
-        img_nums = [x.split('/')[-1].split('_')[1] for x in mic_list]
-
-        for img in img_nums[3:]:
-
-            mic_file = f'{raw_mic_dir}{block}/hdf5/{block}_img{img}_image.hdf5'
-            mic_seg = f'{raw_mic_dir}{block}/hdf5/{block}_img{img}_label.hdf5'
-            blockface_image = f'{raw_bf_dir}affineImages/{block}/difference/IMG_{img}_difference.mhd'
-            blockface_label = f'{raw_bf_dir}labels_hd/{block}/IMG_{img}_label_hd.nrrd'
-
-            blockface = io.LoadITKFile(blockface_image, device=device)
-            label_data = io.LoadITKFile(blockface_label, device=device)
-
-            blockface = (blockface - blockface.min()) / (blockface.max() - blockface.min())
-            label = blockface.clone()
-            label.data = label_data.data.clone()
-
-            aff_mic, aff_mic_seg, affine = tools.process_mic(mic_file, mic_seg, blockface, label, device=device)
-
-            aff_mic *= aff_mic_seg
-            blockface *= label
-
-            blockface_s = core.StructuredGrid.FromGrid(blockface, tensor=blockface[0].unsqueeze(0), channels=1)
-            aff_mic = (aff_mic - aff_mic.min()) / (aff_mic.max() - aff_mic.min())
-
-            def_label, label_deformation = match_bf_mic(
-                aff_mic_seg,
-                label,
-                steps=[0.01, 0.005],
-                scales=[4, 1],
-                gauss=True
-            )
-
-            label_def_mic = so.ApplyGrid(label_deformation, device=device)(aff_mic, label_deformation)
-
-            def_image, image_deformation = match_bf_mic(
-                label_def_mic,
-                blockface_s,
-                steps=[0.01, 0.01],
-                scales=[2, 1],
-            )
-
-            composer = so.ComposeGrids(device=device, dtype=torch.float32, padding_mode='border')
-            deformation = composer([image_deformation, label_deformation])
-
-            def_mic = so.ApplyGrid(deformation, device=device)(aff_mic, deformation)
-
-            try:
-                with h5py.File(mic_file, 'r') as f:
-                    mic = f['ImageData'][:]
-            except KeyError:
-                with h5py.File(mic_file, 'r') as f:
-                    mic = f['RawImage/ImageData'][:]
-
-            mic = core.StructuredGrid(
-                mic.shape[1:],
-                tensor=torch.tensor(mic, dtype=torch.float32, device=device),
-                device=device,
-                dtype=torch.float32,
-                channels=3
-            )
-
-            with h5py.File(mic_file, 'w') as f:
-                g = f.create_group('RawImage')
-                d = f.create_group('Deformation')
-                g.create_dataset('ImageData', data=mic.data.cpu().numpy())
-                d.create_dataset('Phi', data=deformation.data.cpu().numpy())
-                g.attrs['Shape'] = list(mic.shape())
-                g.attrs['Spacing'] = mic.spacing.tolist()
-                g.attrs['Origin'] = mic.origin.tolist()
-                g.attrs['Affine'] = affine.tolist()
-                d.attrs['Shape'] = list(deformation.shape())
-                d.attrs['Spacing'] = deformation.spacing.tolist()
-                d.attrs['Origin'] = deformation.origin.tolist()
-
-            io.SaveITKFile(def_mic, f'{raw_mic_dir}{block}/volume/images/IMG_{img}_def_histopathology.mhd')
-
-            plt.close('all')
-
-    print('All Done')
 
 
 if __name__ == '__main__':
