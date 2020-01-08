@@ -117,41 +117,57 @@ def stitch_surfaces(rabbit):
             except IOError:
                 print(f'The target exterior surface for {block} was not found')
 
-
             try:
                 with open(f'{rabbit_dir}{block}{raw_ext}{block}_stitch_config_{piece_ext}.yaml', 'r') as f:
                     params = yaml.load(f, Loader=yaml.FullLoader)
             except IOError:
                 params = {
-                    'spatial_sigma': [0.5],
-                    'smoothing_sigma': [150.0, 150.0, 150.0],
-                    'deformable_lr': [0.00001],
-                    'converge': 1.0,
-                    'rigid_transform': True,
-                    'phi_inv_size': [25, 25, 25]
+                    'spatial_sigma': [6.0],
+                    'propagation_sigma': [1.9, 1.9, 0.5],
+                    'deformable_lr': [0.0006],
+                    'converge': 2.0,
+                    'grid_size': [25, 100, 100]
                 }
+
             # Do the deformable registration
-            def_src_surface, def_tar_surface, def_src_excess, phi_inv = tools.stitch_surfaces(
+            def_src_surface, def_tar_surface, def_src_excess, phi, phi_inv = tools.stitch_surfaces(
                 tar_surface.copy(),
                 src_surface.copy(),
                 mid_surface.copy(),
+                src_excess=[surface_ext],
                 deformable_lr=params['deformable_lr'],
                 spatial_sigma=params['spatial_sigma'],
-                smoothing_sigma=params['smoothing_sigma'],
-                phi_inv_size=params['phi_inv_size'],
+                prop_sigma=params['propagation_sigma'],
+                grid_size=params['grid_size'],
                 converge=params['converge'],
-                src_excess=[surface_ext],
+                accu_forward=True,
+                accu_inverse=True,
                 device=device,
+                phi_device='cuda:0',
+                phi_inv_device='cuda:1'
             )
 
-            print('Done')
+            # print('Done')
 
             # Save out the parameters:
             # with open(f'{rabbit_dir}{block}{raw_ext}{block}_stitch_config_{piece_ext}.yaml', 'w') as f:
             #     yaml.dump(params, f)
 
+            test_id = phi_inv.clone()
+            test_id.set_to_identity_lut_()
+            phi.to_(phi_inv.device)
+
+            undo_test = so.ApplyGrid.Create(phi, device=phi_inv.device)(phi_inv)
+
+            plt.figure();
+            plt.imshow((undo_test - test_id)[1, 15, :, :].cpu())
+
+            plt.figure();
+            plt.imshow((undo_test - test_id)[2, 15, :, :].cpu())
+
             # Save out all of the deformable transformed surfaces and phi inv
-            # io.SaveITKFile(phi_inv, f'{rabbit_dir}{block}{vol_ext}{block}_phi_inv_stitch__{piece_ext}.mhd')
+            io.SaveITKFile(phi_inv, f'{rabbit_dir}{block}{vol_ext}{block}_phi_inv_stitch_{piece_ext}.mhd')
+            io.SaveITKFile(phi, f'{rabbit_dir}{block}{vol_ext}{block}_phi_stitch_{piece_ext}.mhd')
             # out_path = f'{rabbit_dir}{block}{raw_ext}{block}'
             # io.WriteOBJ(def_src_surface.vertices, def_src_surface.indices,
             #             f'{out_path}_source_piece_surface_{piece_ext}_stitched.obj')

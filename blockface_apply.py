@@ -114,18 +114,27 @@ def def_block(rabbit, block):
     # Flip phi_inv back to the way it was
     phi_inv.data = phi_inv.data.flip(0)
 
-    # try:
-    #     stitch_files = sorted(glob.glob(f'{data_dir}{vol_ext}{block}_phi_inv_stitch_*.mhd'))
-    #     stitch_list = []
-    #     for stitch_file in stitch_files:
-    #         phi_stitch = io.LoadITKFile(stitch_file, device=device)
-    #         phi_stitch.set_size((60, 1024, 1024))
-    #         stitch_list += [phi_stitch.clone()]
-    #     composer = so.ComposeGrids.Create(padding_mode='border', device=device)
-    #     final_phi = composer([phi_inv] + stitch_list)
-    #     phi_inv = final_phi.clone()
-    # except IOError:
-    #     pass
+    try:
+        stitch_files = sorted(glob.glob(f'{data_dir}{vol_ext}{block}_phi_inv_stitch_*.mhd'))
+        stitch_list = []
+        for stitch_file in stitch_files:
+            phi_stitch = io.LoadITKFile(stitch_file, device=device)
+            phi_stitch.set_size((60, 1024, 1024))
+            stitch_list += [phi_stitch.clone()]
+        composer = so.ComposeGrids.Create(padding_mode='border', device=device)
+        final_phi = composer([phi_inv] + stitch_list)
+        phi_inv = final_phi.clone()
+    except IOError:
+        pass
+
+    test = so.ApplyGrid.Create(stitch_list[0], pad_mode='zeros', device=device)(bf, stitch_list[0])
+    io.SaveITKFile(test, '/home/sci/blakez/HOPEFUL.mhd')
+
+    unstitch_files = sorted(glob.glob(f'{data_dir}{vol_ext}{block}_phi_stitch_*.mhd'))
+    phi_unstitch = io.LoadITKFile(unstitch_files[0], device=device)
+    phi_unstitch.set_size((60, 1024, 1024))
+    test_undone = so.ApplyGrid.Create(phi_unstitch, pad_mode='zeros', device=device)(test, phi_unstitch)
+    io.SaveITKFile(test_undone, '/home/sci/blakez/HOPEFUL_undone.mhd')
 
     def_bf = so.ApplyGrid.Create(phi_inv, pad_mode='zeros', device=device)(bf, phi_inv)
     def_seg = so.ApplyGrid.Create(phi_inv, pad_mode='zeros', device=device)(seg, phi_inv)
@@ -209,8 +218,8 @@ if __name__ == '__main__':
     data_dir = f'/hdscratch/ucair/{rabbit}/blockface/'
     block_list = [x.split('/')[-1] for x in sorted(glob.glob(f'{data_dir}/block*'))]
 
-    for block in block_list:
-        generate_label_volume(rabbit, block=block)
+    # for block in block_list:
+    #     generate_label_volume(rabbit, block=block)
 
     # Dont need to do this for the middle block - should I change this so that things are just identity??
     block_list.remove(block_list[len(block_list) // 2])
