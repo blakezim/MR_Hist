@@ -1,23 +1,10 @@
 import os
-import sys
 import glob
 import yaml
-import copy
-import h5py
 import tools
-import torch
-import numpy as np
-import subprocess as sp
-import skimage.segmentation as seg
-
-from collections import OrderedDict
-import torch.optim as optim
 
 import CAMP.Core as core
 import CAMP.FileIO as io
-import CAMP.StructuredGridTools as st
-import CAMP.UnstructuredGridOperators as uo
-import CAMP.StructuredGridOperators as so
 
 import matplotlib
 matplotlib.use('qt5agg')
@@ -36,10 +23,7 @@ def stitch_surfaces(rabbit):
     # Get a list of the blocks
     block_list = sorted(glob.glob(f'{rabbit_dir}block*'))
 
-    rerun = True
-    skip_blocks = ['block06', 'block07']
-    # skip_blocks = ['block08', 'block05', 'block09', 'block10', 'block11', 'block12']
-    # skip_blocks = ['block07', 'block08', 'block09']
+    complete = []
 
     for i, block_path in enumerate(block_list):
 
@@ -50,13 +34,16 @@ def stitch_surfaces(rabbit):
         target_surface_paths = [x for x in target_surface_paths if 'stitched' not in x]
         source_surface_paths = [x for x in source_surface_paths if 'stitched' not in x]
 
-        if block in skip_blocks:
-            print(f'Skipping {block} ... ')
+        if block in complete:
+            print(f'{block} already registered ... ')
             continue
 
         if target_surface_paths == [] and source_surface_paths == []:
             print(f'No stitching surfaces for {block} ... ')
             continue
+
+        source_surfaces = []
+        target_surfaces = []
 
         for target_surface_path, source_surface_path in zip(target_surface_paths, source_surface_paths):
 
@@ -64,6 +51,7 @@ def stitch_surfaces(rabbit):
                 verts, faces = io.ReadOBJ(target_surface_path)
                 tar_surface = core.TriangleMesh(verts, faces)
                 tar_surface.to_(device)
+                target_surfaces.append(tar_surface.copy())
             except IOError:
                 print(f'The target stitching surface for {block} was not found ... skipping')
                 continue
@@ -73,111 +61,127 @@ def stitch_surfaces(rabbit):
                 src_surface = core.TriangleMesh(verts, faces)
                 src_surface.to_(device)
                 src_surface.flip_normals_()
+                source_surfaces.append(src_surface.copy())
             except IOError:
                 print(f'The source stitching surface for {block} was not found ... skipping')
                 continue
 
-            piece_ext = target_surface_path.split('_')[-1].split('.')[0]
+        for ts, ss in zip(target_surfaces[1:], source_surfaces[1:]):
+            source_surfaces[0].add_surface_(ss.vertices, ss.indices)
+            target_surfaces[0].add_surface_(ts.vertices, ts.indices)
 
+        src_surface = source_surfaces[0].copy()
+        tar_surface = target_surfaces[0].copy()
+
+        try:
+            with open(f'{rabbit_dir}{block}{raw_ext}{block}_middle_stitch_config.yaml', 'r') as f:
+                params = yaml.load(f, Loader=yaml.FullLoader)
+        except IOError:
+            params = {
+                'currents_sigma': [5.0],
+                'propagation_sigma': None,
+                'deformable_lr': [0.001],
+                'converge': 0.05,
+            }
+
+        # Do the deformable registration
+        def_src_surface, _ = tools.deformable_register(
+            tar_surface.copy(),
+            src_surface.copy(),
+            src_excess=None,
+            deformable_lr=params['deformable_lr'],
+            currents_sigma=params['currents_sigma'],
+            prop_sigma=params['propagation_sigma'],
+            grid_size=None,
+            converge=params['converge'],
+            accu_forward=False,
+            accu_inverse=False,
+            device=device,
+            grid_device='cuda:0'
+        )
+
+        # Save the parameters for the deformation
+        with open(f'{rabbit_dir}{block}{raw_ext}{block}_middle_stitch_config.yaml', 'w') as f:
+            yaml.dump(params, f)
+
+        # Create the middle surface by going half way to the registered surface
+        new_verts = src_surface.vertices.clone() + ((def_src_surface.vertices - src_surface.vertices) * 0.5)
+        mid_surface = src_surface.copy()
+        mid_surface.vertices = new_verts.clone()
+        mid_surface.calc_normals()
+        mid_surface.calc_centers()
+
+        # Load the extra surfaces that need to be deformed
+        extras_paths = [
+            f'{rabbit_dir}{block}{raw_ext}{block}_decimate.obj',
+            f'{rabbit_dir}{block}{raw_ext}{block}_ext.obj',
+        ]
+
+        if i > 0:
+            extras_paths += [f'{rabbit_dir}{block}{raw_ext}{block}_foot.obj']
+        if i < len(block_list):
+            extras_paths += [f'{rabbit_dir}{block}{raw_ext}{block}_head.obj']
+
+        # Check for support surfaces
+        extras_paths += sorted(glob.glob(f'{rabbit_dir}{block}{raw_ext}{block}*support.obj'))
+
+        extra_surfaces = []
+        for path in extras_paths:
             try:
-                with open(f'{rabbit_dir}{block}{raw_ext}{block}_stitch_config_{piece_ext}.yaml', 'r') as f:
-                    params = yaml.load(f, Loader=yaml.FullLoader)
+                verts, faces = io.ReadOBJ(path)
             except IOError:
-                params = {
-                    'spatial_sigma': [1.0],
-                    'smoothing_sigma': [150.0, 150.0, 150.0],
-                    'deformable_lr': [0.0001],
-                    'converge': 0.05,
-                    'rigid_transform': True,
-                    'phi_inv_size': [25, 128, 128]
-                }
+                extra_name = path.split('/')[-1]
+                print(f'{extra_name} not found as an extra ... removing from list')
+                _ = extras_paths.pop(extras_paths.index(path))
+                continue
 
-            # Do the deformable registration
-            def_src_surface = tools.deformable_register_no_phi(
-                tar_surface.copy(),
-                src_surface.copy(),
-                deformable_lr=params['deformable_lr'],
-                spatial_sigma=params['spatial_sigma'],
-                smoothing_sigma=params['smoothing_sigma'],
-                converge=params['converge'],
-                device=device
-            )
+            extra_surfaces += [core.TriangleMesh(verts, faces)]
+            extra_surfaces[-1].to_(device)
 
-            new_verts = src_surface.vertices.clone() + ((def_src_surface.vertices - src_surface.vertices) * 0.5)
-            mid_surface = src_surface.copy()
-            mid_surface.vertices = new_verts.clone()
-            mid_surface.calc_normals()
-            mid_surface.calc_centers()
+        try:
+            with open(f'{rabbit_dir}{block}{raw_ext}{block}_stitch_config.yaml', 'r') as f:
+                params = yaml.load(f, Loader=yaml.FullLoader)
+        except IOError:
+            params = {
+                'currents_sigma': [6.0],
+                'propagation_sigma': [1.9, 1.9, 0.5],
+                'deformable_lr': [0.0006],
+                'converge': 2.0,
+                'grid_size': [25, 100, 100]
+            }
 
-            # Load the target ext
-            try:
-                verts, faces = io.ReadOBJ(f'{rabbit_dir}{block}{raw_ext}{block}_decimate.obj')
-                surface_ext = core.TriangleMesh(verts, faces)
-                surface_ext.to_(device)
-            except IOError:
-                print(f'The target exterior surface for {block} was not found')
+        # Do the deformable registration
+        def_src_surface, def_tar_surface, def_excess, phi, phi_inv = tools.stitch_surfaces(
+            tar_surface.copy(),
+            src_surface.copy(),
+            mid_surface.copy(),
+            src_excess=extra_surfaces,
+            deformable_lr=params['deformable_lr'],
+            currents_sigma=params['currents_sigma'],
+            prop_sigma=params['propagation_sigma'],
+            grid_size=params['grid_size'],
+            converge=params['converge'],
+            accu_forward=True,
+            accu_inverse=True,
+            device=device,
+            grid_device='cuda:0',
+        )
 
-            try:
-                with open(f'{rabbit_dir}{block}{raw_ext}{block}_stitch_config_{piece_ext}.yaml', 'r') as f:
-                    params = yaml.load(f, Loader=yaml.FullLoader)
-            except IOError:
-                params = {
-                    'spatial_sigma': [6.0],
-                    'propagation_sigma': [1.9, 1.9, 0.5],
-                    'deformable_lr': [0.0006],
-                    'converge': 2.0,
-                    'grid_size': [25, 100, 100]
-                }
+        # Save the parameters for the deformation
+        with open(f'{rabbit_dir}{block}{raw_ext}{block}_stitch_config.yaml', 'w') as f:
+            yaml.dump(params, f)
 
-            # Do the deformable registration
-            def_src_surface, def_tar_surface, def_src_excess, phi, phi_inv = tools.stitch_surfaces(
-                tar_surface.copy(),
-                src_surface.copy(),
-                mid_surface.copy(),
-                src_excess=[surface_ext],
-                deformable_lr=params['deformable_lr'],
-                spatial_sigma=params['spatial_sigma'],
-                prop_sigma=params['propagation_sigma'],
-                grid_size=params['grid_size'],
-                converge=params['converge'],
-                accu_forward=True,
-                accu_inverse=True,
-                device=device,
-                phi_device='cuda:0',
-                phi_inv_device='cuda:1'
-            )
+        # Save the deformations
+        io.SaveITKFile(phi_inv, f'{rabbit_dir}{block}{vol_ext}{block}_phi_inv_stitch.mhd')
+        io.SaveITKFile(phi, f'{rabbit_dir}{block}{vol_ext}{block}_phi_stitch.mhd')
 
-            # print('Done')
+        # Save out the stitched surfaces
+        out_path = f'{rabbit_dir}{block}{raw_ext}{block}'
+        for extra_path, extra_surface in zip(extras_paths, def_excess):
+            name = extra_path.split('/')[-1].split(f'{block}')[-1].replace('.', '_stitched.')
+            io.WriteOBJ(extra_surface.vertices, extra_surface.indices, f'{out_path}{name}')
 
-            # Save out the parameters:
-            # with open(f'{rabbit_dir}{block}{raw_ext}{block}_stitch_config_{piece_ext}.yaml', 'w') as f:
-            #     yaml.dump(params, f)
-
-            test_id = phi_inv.clone()
-            test_id.set_to_identity_lut_()
-            phi.to_(phi_inv.device)
-
-            undo_test = so.ApplyGrid.Create(phi, device=phi_inv.device)(phi_inv)
-
-            plt.figure();
-            plt.imshow((undo_test - test_id)[1, 15, :, :].cpu())
-
-            plt.figure();
-            plt.imshow((undo_test - test_id)[2, 15, :, :].cpu())
-
-            # Save out all of the deformable transformed surfaces and phi inv
-            io.SaveITKFile(phi_inv, f'{rabbit_dir}{block}{vol_ext}{block}_phi_inv_stitch_{piece_ext}.mhd')
-            io.SaveITKFile(phi, f'{rabbit_dir}{block}{vol_ext}{block}_phi_stitch_{piece_ext}.mhd')
-            # out_path = f'{rabbit_dir}{block}{raw_ext}{block}'
-            # io.WriteOBJ(def_src_surface.vertices, def_src_surface.indices,
-            #             f'{out_path}_source_piece_surface_{piece_ext}_stitched.obj')
-
-            # for extra_path, extra_surface in zip(extras_paths, def_extras):
-            #     name = extra_path.split('/')[-1].split(f'{block}')[-1].replace('.', '_stitched.')
-            #     if not os.path.exists(f'{out_path}{name}') or rerun:
-            #         if 'decimate' in name:
-            #             continue
-            #         io.WriteOBJ(extra_surface.vertices, extra_surface.indices, f'{out_path}{name}')
+        print(f'Done stitching {block} ... ')
 
 
 if __name__ == '__main__':

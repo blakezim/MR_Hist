@@ -93,213 +93,11 @@ def affine_register(tar_surface, src_surface, affine_lr=1.0e-06, translation_lr=
     return full_aff
 
 
-def deformable_register(tar_surface, src_surface, spatial_sigma=[0.5], deformable_lr=[1.0e-04],
-                        smoothing_sigma=[1.5, 1.5, 10.0], converge=0.3, src_excess=None, device='cpu',
-                        phi_inv_size=[30, 100, 100]):
-    def _calc_normals(vertices, indices):
-        tris = vertices[indices]
-
-        a = tris[:, 0, :]
-        b = tris[:, 1, :]
-        c = tris[:, 2, :]
-
-        return 0.5 * torch.cross((a - b), (c - b), dim=1)
-
-    def _calc_centers(vertices, indices):
-        tris = vertices[indices]
-        return (1 / 3.0) * tris.sum(1)
-
-    def _signed_distance_transform(verts, phi_inv, inds):
-        with torch.no_grad():
-            centers = _calc_centers(verts, inds)
-            normals = _calc_normals(verts, inds)
-
-            # Flatten phi_inv
-            flat_phi = phi_inv.data.clone().flatten(start_dim=1).permute(1, 0).flip(-1)
-            dis, ind = ((flat_phi.unsqueeze(1) - centers.unsqueeze(0)) ** 2).sum(-1, keepdim=True).squeeze().min(dim=-1)
-            vectors = flat_phi - centers[ind]
-            signed = torch.bmm(vectors.view(len(flat_phi), 1, 3), normals[ind].view(len(flat_phi), 3, 1)).squeeze()
-
-            mask = (signed >= 0).reshape(phi_inv.shape()[1:])
-
-            return mask
-
-    def _calc_vector_field(verts, grads, lookup_locations, sigma):
-        with torch.no_grad():
-            # Flatten phi_inv
-            flat_phi = lookup_locations.data.clone().flatten(start_dim=1).permute(1, 0).flip(-1)
-            flat_phi = ((flat_phi.unsqueeze(1) - verts.unsqueeze(0)) ** 2).sum(-1, keepdim=True)
-            flat_phi = torch.exp(-flat_phi / (2 * sigma[None, None, :]))
-            flat_phi = (grads[None, :, :].repeat(len(flat_phi), 1, 1) * flat_phi).sum(1)
-
-            # Now change it back
-            v_field = flat_phi.flip(-1).permute(1, 0).reshape(lookup_locations.data.shape)
-            v_field *= -1
-
-            return v_field.clone().contiguous()
-
-    def _update_phi_inv(phi_inv, update):
-        with torch.no_grad():
-            # Add the vfield to the identity
-            phi_inv = ApplyGrid.Create(update, pad_mode='border',
-                                       device=update.device, dtype=update.dtype)(phi_inv, update)
-
-            return phi_inv
-
-    # Define a grid size
-    grid_size = torch.tensor(phi_inv_size, device=device, dtype=tar_surface.vertices.dtype)
-
-    # Create a structured grid for PHI inverse - need to calculate the bounding box
-    extent_verts = src_surface.vertices.clone()
-
-    if src_excess is not None:
-        for surface in src_excess:
-            extent_verts = torch.cat([src_surface.vertices, surface.vertices], 0)
-
-        vert_min = extent_verts.min(0).values
-        vert_max = extent_verts.max(0).values
-    else:
-        src_excess = []
-        vert_min = src_surface.vertices.min(0).values
-        vert_max = src_surface.vertices.max(0).values
-
-    # Expand beyond the min so that we contain the entire surface - 10 % should be enough
-    expansion = (vert_max - vert_min) * 0.1
-    vert_min -= expansion
-    vert_max += expansion
-
-    # the verts are in (x,y,z) and we need (z,y,x) for volumes
-    vert_min = vert_min.flip(0)
-    vert_max = vert_max.flip(0)
-
-    # Calculate the spacing
-    spacing = (vert_max - vert_min) / grid_size
-
-    phi_inv = StructuredGrid(
-        grid_size, spacing=spacing, origin=vert_min, device='cuda:1', dtype=torch.float32, requires_grad=False
-    )
-    phi = StructuredGrid(
-        grid_size, spacing=spacing, origin=vert_min, device='cuda:1', dtype=torch.float32, requires_grad=False
-    )
-    identity = StructuredGrid(
-        grid_size, spacing=spacing, origin=vert_min, device='cuda:1', dtype=torch.float32, requires_grad=False
-    )
-    phi_inv.set_to_identity_lut_()
-    phi.set_to_identity_lut_()
-    identity.set_to_identity_lut_()
-
-    # Create the list of variable that need to be optimized
-    extra_params = []
-    for surface in src_excess:
-        extra_params += [surface.vertices]
-
-    smoothing_sigma = torch.tensor(smoothing_sigma, device=device)
-
-    for i, sigma in enumerate(spatial_sigma):
-
-        # Create the deformable model
-        model = DeformableCurrents.Create(
-            src_surface.copy(),
-            tar_surface,
-            sigma=sigma,
-            kernel='cauchy',
-            device=device
-        )
-
-        # Create a smoothing filter
-        gauss = GaussianSmoothing(smoothing_sigma, dim=3, device=device)
-
-        # Set up the optimizer
-        optimizer = optim.SGD([
-            {'params': [model.src_vertices, phi.data], 'lr': deformable_lr[i]},
-            {'params': extra_params, 'lr': deformable_lr[i]}], momentum=0.9, nesterov=True
-        )
-
-        # Now iterate
-        energy = []
-        for epoch in range(0, 1000):
-            optimizer.zero_grad()
-            loss = model()
-
-            print(f'===> Iteration {epoch:3} Energy: {loss.item():.3f} ')
-            energy.append(loss.item())
-
-            loss.backward()  # Compute the gradients
-
-            with torch.no_grad():
-                model_verts = model.src_vertices.clone().to(device='cuda:1')
-                model_grads = model.src_vertices.grad.clone().to(device='cuda:1')
-                # Need to propegate the gradients to the other vertices
-                for surf in optimizer.param_groups[1]['params']:
-                    d = ((surf.unsqueeze(1) - model.src_vertices.unsqueeze(0)) ** 2).sum(-1, keepdim=True)
-                    d = torch.exp(-d / (2 * smoothing_sigma[None, None, :]))
-                    surf.grad = (model.src_vertices.grad[None, :, :].repeat(len(d), 1, 1) * d).sum(1)
-
-                # Calcuate the vector field for the grid and put into identity grad
-                optimizer.param_groups[0]['params'][1].grad = _calc_vector_field(
-                    model_verts, model_grads, phi_inv, smoothing_sigma.clone().to(device='cuda:1')
-                )
-
-                # For testing purposes
-                # Need to create a combined surface with the exterior and the register surface
-                # surf_verts = torch.cat([model.src_vertices.clone(), extra_params[0].clone()], dim=0)
-                # surf_inds = torch.cat([src_surface.indices.clone(), src_excess[0].indices.clone()], dim=0)
-                # test_surface = src_surface.copy()
-                # test_surface.flip_normals_()
-                # test_surface.add_surface_(src_excess[0].vertices, src_excess[0].indices)
-                # test = _signed_distance_transform(test_surface.vertices, phi_inv, test_surface.indices)
-                # surf_grads = torch.cat([model.src_vertices.grad.clone(), extra_params[0].grad.clone()], dim=0)
-            # Now the gradients are stored in the parameters being optimized
-            model.src_vertices.grad = gauss(model.src_vertices)
-            optimizer.step()  #
-
-            with torch.no_grad():
-                phi.data = optimizer.param_groups[0]['params'][1].data
-                # print((phi.data - identity.data).max())
-                # Now that the grads have been applied to the identity field, we can use it to sample phi_inv
-                phi_inv = _update_phi_inv(phi_inv, phi)
-                # print((optimizer.param_groups[0]['params'][1].data - identity.data).max())
-                # Set the optimizer data back to identity
-                optimizer.param_groups[0]['params'][1].data = identity.data.clone()
-
-            if epoch > 10 and np.mean(energy[-7:]) - energy[-1] < converge:
-                break
-
-        # Update the surfaces
-        src_surface.vertices = model.src_vertices.detach().clone()
-        for surface, def_verts in zip(src_excess, optimizer.param_groups[1]['params']):
-            surface.vertices = def_verts.detach().clone()
-
-    return src_surface, src_excess, phi_inv
-
-
-def register_surfaces(tar_element, src_element, sigma, src_excess=None, device='cpu'):
-    # Do the rigid registration of the
-    affine_tform = affine_register(
-        tar_element.copy(), src_element.copy(), rigid=True, device=device
-    )
-
-    # Apply the affine to the source element and the excess
-    aff_tformer = AffineTransformSurface.Create(affine_tform, device=device)
-    aff_src_element = aff_tformer(src_element)
-
-    aff_excess_list = []
-    for surface in src_excess:
-        aff_excess_list += [aff_tformer(surface)]
-
-    # Do the deformable registration
-    def_surface, def_excess, phi_inv = deformable_register(
-        tar_element.copy(), aff_src_element.copy(), sigma, src_excess=aff_excess_list, device=device
-    )
-
-    return affine_tform, phi_inv, def_surface, def_excess
-
-
-def stitch_surfaces(tar_surface, src_surface, reference_surface, src_excess=None, deformable_lr=1.0e-04,
-                    spatial_sigma=None, prop_sigma=None, converge=0.3, grid_size=None,
-                    accu_forward=False, accu_inverse=False, device='cpu', phi_device='cpu', phi_inv_device='cpu'):
-    if spatial_sigma is None:
-        spatial_sigma = [0.5]
+def deformable_register(tar_surface, src_surface, src_excess=None, deformable_lr=1.0e-04,
+                        currents_sigma=None, prop_sigma=None, converge=0.3, grid_size=None,
+                        accu_forward=False, accu_inverse=False, device='cpu', grid_device='cpu'):
+    if currents_sigma is None:
+        currents_sigma = [0.5]
     if prop_sigma is None:
         prop_sigma = [1.5, 1.5, 0.5]
     if grid_size is None:
@@ -352,9 +150,9 @@ def stitch_surfaces(tar_surface, src_surface, reference_surface, src_excess=None
     deformation = []
 
     if accu_forward or accu_inverse:
-        identity = _create_grid(src_surface, src_excess, grid_size, phi_device)
+        identity = _create_grid(src_surface, src_excess, grid_size, grid_device)
         identity.set_to_identity_lut_()
-        deformation.append(torch.zeros_like(identity.data).to(phi_device))
+        deformation.append(torch.zeros_like(identity.data).to(grid_device))
         if accu_forward:
             phi = StructuredGrid.FromGrid(identity)
             phi.set_to_identity_lut_()
@@ -370,7 +168,170 @@ def stitch_surfaces(tar_surface, src_surface, reference_surface, src_excess=None
 
     prop_sigma = torch.tensor(prop_sigma, device=device)
 
-    for i, sigma in enumerate(spatial_sigma):
+    for i, sigma in enumerate(currents_sigma):
+
+        # Create the deformable model
+        model = DeformableCurrents.Create(
+            src_surface.copy(),
+            tar_surface.copy(),
+            sigma=sigma,
+            kernel='cauchy',
+            device=device
+        )
+
+        # Set up the optimizer
+        optimizer = optim.SGD([
+            {'params': [model.src_vertices], 'lr': deformable_lr[i]},
+            {'params': extra_params, 'lr': deformable_lr[i]},
+            {'params': deformation, 'lr': deformable_lr[i]}], momentum=0.9, nesterov=True
+        )
+
+        # Now iterate
+        energy = []
+        for epoch in range(0, 200):
+            optimizer.zero_grad()
+            loss = model()
+
+            print(f'===> Iteration {epoch:3} Energy: {loss.item():.3f} ')
+            energy.append(loss.item())
+
+            loss.backward()  # Compute the gradients
+
+            with torch.no_grad():
+
+                # Create a single array of the gradients to be propagated
+                concat_grad = model.src_vertices.grad.clone()
+                concat_vert = model.src_vertices.clone()
+
+                # Need to propegate the gradients to the other vertices
+                for surf in optimizer.param_groups[1]['params']:
+                    # Propagate the updates from the vertices
+                    surf.grad = _prop_gradients(surf, concat_grad, concat_vert, prop_sigma)
+
+                if accu_forward or accu_inverse:
+
+                    grid_grads = _prop_gradients(
+                        identity.data.clone().flatten(start_dim=1).permute(1, 0).flip(-1).to(grid_device),
+                        concat_grad.clone().to(grid_device),
+                        concat_vert.clone().to(grid_device),
+                        prop_sigma.clone().to(grid_device)
+                    )
+
+                    grid_grads = -1 * grid_grads.flip(-1).permute(1, 0).reshape(identity.shape()).contiguous()
+                    optimizer.param_groups[2]['params'][0].grad = grid_grads.clone()
+
+                    # Propagate the gradients to the register surfaces
+                    model.src_vertices.grad = _prop_gradients(model.src_vertices, concat_grad, concat_vert, prop_sigma)
+
+                    optimizer.step()
+                    if accu_forward:
+                        phi = _update_phi(phi, optimizer.param_groups[2]['params'][0].clone())
+                    if accu_inverse:
+                        phi_inv = _update_phi_inv(phi_inv, identity, optimizer.param_groups[2]['params'][0].clone())
+
+                    optimizer.param_groups[2]['params'][0].data = torch.zeros_like(identity.data).to(grid_device)
+
+                else:
+
+                    # Propagate the gradients to the register surfaces
+                    model.src_vertices.grad = _prop_gradients(model.src_vertices, concat_grad, concat_vert, prop_sigma)
+
+                    optimizer.step()
+
+            if epoch > 10 and np.mean(energy[-7:]) - energy[-1] < converge:
+                break
+
+        # Update the surfaces
+        src_surface.vertices = model.src_vertices.detach().clone()
+        for surface, def_verts in zip(src_excess, optimizer.param_groups[1]['params']):
+            surface.vertices = def_verts.detach().clone()
+
+    if accu_forward and accu_inverse:
+        return src_surface, src_excess, phi, phi_inv
+    elif accu_forward:
+        return src_surface, src_excess, phi
+    elif accu_inverse:
+        return src_surface, src_excess, phi_inv
+    else:
+        return src_surface, src_excess,
+
+
+def stitch_surfaces(tar_surface, src_surface, reference_surface, src_excess=None, deformable_lr=1.0e-04,
+                    currents_sigma=None, prop_sigma=None, converge=0.3, grid_size=None,
+                    accu_forward=False, accu_inverse=False, device='cpu', grid_device='cpu'):
+    if currents_sigma is None:
+        currents_sigma = [0.5]
+    if prop_sigma is None:
+        prop_sigma = [1.5, 1.5, 0.5]
+    if grid_size is None:
+        grid_size = [30, 100, 100]
+    if src_excess is None:
+        src_excess = []
+
+    def _update_phi(phi, update_tensor):
+        update = core.StructuredGrid.FromGrid(phi, tensor=update_tensor, channels=phi.channels)
+        applier = ApplyGrid.Create(phi, pad_mode='border', device=update.device, dtype=update.dtype)
+        return phi - applier(update)
+
+    def _update_phi_inv(phi_inv, identity, update_tensor):
+        update = core.StructuredGrid.FromGrid(phi_inv, tensor=update_tensor, channels=phi_inv.channels)
+        smaple = identity.clone() + update
+
+        return ApplyGrid.Create(smaple, pad_mode='border', device=update.device, dtype=update.dtype)(phi_inv)
+
+    def _prop_gradients(prop_locations, grads, verts, prop_sigma):
+        d = ((prop_locations.unsqueeze(1) - verts.unsqueeze(0)) ** 2).sum(-1, keepdim=True)
+        d = torch.exp(-d / (2 * prop_sigma[None, None, :] ** 3))
+        return (grads[None, :, :].repeat(len(d), 1, 1) * d).sum(1)
+
+    def _create_grid(src_surface, src_excess, grid_size, grid_device):
+        grid_size = torch.tensor(grid_size, device=device, dtype=tar_surface.vertices.dtype)
+        extent_verts = src_surface.vertices.clone()
+
+        for surface in src_excess:
+            extent_verts = torch.cat([extent_verts, surface.vertices], 0)
+
+        vert_min = extent_verts.min(0).values
+        vert_max = extent_verts.max(0).values
+
+        # Expand beyond the min so that we contain the entire surface - 10 % should be enough
+        expansion = (vert_max - vert_min) * 0.1
+        vert_min -= expansion
+        vert_max += expansion
+
+        # the verts are in (x,y,z) and we need (z,y,x) for volumes
+        vert_min = vert_min.flip(0)
+        vert_max = vert_max.flip(0)
+
+        # Calculate the spacing
+        spacing = (vert_max - vert_min) / grid_size
+
+        return StructuredGrid(
+            grid_size, spacing=spacing, origin=vert_min, device=grid_device, dtype=torch.float32, requires_grad=False
+        )
+
+    deformation = []
+
+    if accu_forward or accu_inverse:
+        identity = _create_grid(src_surface, src_excess, grid_size, grid_device)
+        identity.set_to_identity_lut_()
+        deformation.append(torch.zeros_like(identity.data).to(grid_device))
+        if accu_forward:
+            phi = StructuredGrid.FromGrid(identity)
+            phi.set_to_identity_lut_()
+
+        if accu_inverse:
+            phi_inv = StructuredGrid.FromGrid(identity)
+            phi_inv.set_to_identity_lut_()
+
+    # Create the list of variable that need to be optimized
+    extra_params = []
+    for surface in src_excess:
+        extra_params += [surface.vertices]
+
+    prop_sigma = torch.tensor(prop_sigma, device=device)
+
+    for i, sigma in enumerate(currents_sigma):
 
         # Create the deformable model
         model = StitchingCurrents.Create(
@@ -413,21 +374,11 @@ def stitch_surfaces(tar_surface, src_surface, reference_surface, src_excess=None
 
                 if accu_forward or accu_inverse:
 
-                    # phi_grads = _prop_gradients(
-                    #     optimizer.param_groups[2]['params'][0].flatten(start_dim=1).permute(1, 0).flip(-1),
-                    #     concat_grad.clone().to(phi_device),
-                    #     concat_vert.clone().to(phi_device),
-                    #     prop_sigma.clone().to(phi_device)
-                    # )
-
-                    # phi_grads = phi_grads.flip(-1).permute(1, 0).reshape(identity.shape()).contiguous()
-                    # optimizer.param_groups[2]['params'][0].grad = phi_grads.clone()
-
                     grid_grads = _prop_gradients(
-                        identity.data.clone().flatten(start_dim=1).permute(1, 0).flip(-1).to(phi_device),
-                        concat_grad.clone().to(phi_device),
-                        concat_vert.clone().to(phi_device),
-                        prop_sigma.clone().to(phi_device)
+                        identity.data.clone().flatten(start_dim=1).permute(1, 0).flip(-1).to(grid_device),
+                        concat_grad.clone().to(grid_device),
+                        concat_vert.clone().to(grid_device),
+                        prop_sigma.clone().to(grid_device)
                     )
 
                     grid_grads = -1 * grid_grads.flip(-1).permute(1, 0).reshape(identity.shape()).contiguous()
@@ -443,48 +394,7 @@ def stitch_surfaces(tar_surface, src_surface, reference_surface, src_excess=None
                     if accu_inverse:
                         phi_inv = _update_phi_inv(phi_inv, identity, optimizer.param_groups[2]['params'][0].clone())
 
-                    optimizer.param_groups[2]['params'][0].data = torch.zeros_like(identity.data).to(phi_device)
-                    # optimizer.param_groups[2]['params'][1].data = identity.data.clone().to(phi_inv_device)
-
-                # elif accu_inverse:
-                #     phi_inv_grads = _prop_gradients(
-                #         identity.data.clone().flatten(start_dim=1).permute(1, 0).flip(-1).to(phi_inv_device),
-                #         concat_grad.clone().to(phi_inv_device),
-                #         concat_vert.clone().to(phi_inv_device),
-                #         prop_sigma.clone().to(phi_inv_device)
-                #     )
-                #
-                #     phi_inv_grads = -1 * phi_inv_grads.flip(-1).permute(1, 0).reshape(identity.shape()).contiguous()
-                #     optimizer.param_groups[2]['params'][0].grad = phi_inv_grads.clone()
-                #
-                #     # Propagate the gradients to the register surfaces
-                #     model.src_vertices.grad = _prop_gradients(model.src_vertices, concat_grad, concat_vert, prop_sigma)
-                #     model.tar_vertices.grad = _prop_gradients(model.tar_vertices, concat_grad, concat_vert, prop_sigma)
-                #
-                #     optimizer.step()
-                #
-                #     phi_inv = _update_phi_inv(phi_inv, optimizer.param_groups[2]['params'][0].clone())
-                #     optimizer.param_groups[2]['params'][0].data = identity.data.clone().to(phi_inv_device)
-                #
-                # elif accu_forward:
-                #     phi_grads = _prop_gradients(
-                #         phi.data.clone().flatten(start_dim=1).permute(1, 0).flip(-1).to(phi_device),
-                #         concat_grad.clone().to(phi_device),
-                #         concat_vert.clone().to(phi_device),
-                #         prop_sigma.clone().to(phi_device)
-                #     )
-                #
-                #     phi_grads = phi_grads.flip(-1).permute(1, 0).reshape(identity.shape()).contiguous()
-                #     optimizer.param_groups[2]['params'][0].grad = phi_grads.clone()
-                #
-                #     # Propagate the gradients to the register surfaces
-                #     model.src_vertices.grad = _prop_gradients(model.src_vertices, concat_grad, concat_vert, prop_sigma)
-                #     model.tar_vertices.grad = _prop_gradients(model.tar_vertices, concat_grad, concat_vert, prop_sigma)
-                #
-                #     optimizer.step()
-                #
-                #     phi = _update_phi(phi, optimizer.param_groups[2]['params'][0].clone())
-                #     optimizer.param_groups[2]['params'][0].data = identity.data.clone().to(phi_device)
+                    optimizer.param_groups[2]['params'][0].data = torch.zeros_like(identity.data).to(grid_device)
 
                 else:
 
@@ -510,8 +420,7 @@ def stitch_surfaces(tar_surface, src_surface, reference_surface, src_excess=None
     elif accu_inverse:
         return src_surface, tar_surface, src_excess, phi_inv
     else:
-        return src_surface, tar_surface, src_excess,
-
+        return src_surface, tar_surface, src_excess
 
 
 def process_mic(micicroscopic, mic_seg_file, blockface, label, device='cpu'):
@@ -680,156 +589,3 @@ if __name__ == '__main__':
     # Luminanace
     # lum = 0.2126 * mic.data[0] + 0.7152 * mic.data[1] + 0.0722 * mic.data[2]
 
-
-def deformable_register_no_phi(tar_surface, src_surface, spatial_sigma=[0.5], deformable_lr=[1.0e-04],
-                               smoothing_sigma=[1.5, 1.5, 10.0], converge=0.3, device='cpu', regularize=False):
-    smoothing_sigma = torch.tensor(smoothing_sigma, device=device)
-
-    for i, sigma in enumerate(spatial_sigma):
-
-        # Create the deformable model
-        model = DeformableCurrents.Create(
-            src_surface.copy(),
-            tar_surface,
-            sigma=sigma,
-            kernel='cauchy',
-            device=device
-        )
-
-        # Create a smoothing filter
-        gauss = GaussianSmoothing(smoothing_sigma, dim=3, device=device)
-
-        # Set up the optimizer
-        optimizer = optim.SGD([
-            {'params': [model.src_vertices], 'lr': deformable_lr[i]}], momentum=0.9, nesterov=True
-        )
-
-        # Now iterate
-        energy = []
-        for epoch in range(0, 1000):
-            optimizer.zero_grad()
-            loss = model()
-
-            print(f'===> Iteration {epoch:3} Energy: {loss.item():.3f} ')
-            energy.append(loss.item())
-
-            loss.backward()  # Compute the gradients
-
-            # [_, fig, ax] = io.PlotSurface(tar_surface.vertices, tar_surface.indices)
-            # [src_mesh, _, _] = io.PlotSurface(model.src_vertices, model.src_indices, fig=fig, ax=ax, color=[1, 0, 0])
-            # io.PlotSurface(model.src_vertices, model.src_indices, color=[1, 0, 0], norms=model.src_vertices.grad, cents=model.src_vertices)
-
-            model.src_vertices.grad = gauss(model.src_vertices)
-            optimizer.step()  #
-
-            if epoch > 10 and np.mean(energy[-7:]) - energy[-1] < converge:
-                break
-
-        # Update the surfaces
-        src_surface.vertices = model.src_vertices.detach().clone()
-        # for surface, def_verts in zip(src_excess, optimizer.param_groups[1]['params']):
-        #     surface.vertices = def_verts.detach().clone()
-
-    return src_surface
-
-
-def stitch(tar_surface, src_surface, mid_surface, spatial_sigma=[0.5], deformable_lr=[1.0e-04],
-           smoothing_sigma=[1.5, 1.5, 10.0], converge=0.3, device='cpu', regularize=False):
-    def extra_energy(surf1_verts, surf1_inds, surf2_verts, surf2_inds, sigma):
-
-        def distance(src_centers, tar_centers):
-            return ((src_centers.permute(1, 0).unsqueeze(0) - tar_centers.unsqueeze(2)) ** 2).sum(1)
-
-        def cauchy(d, sigma):
-            return 1 / (1 + (d / sigma)) ** 2
-
-        def energy(src_normals, src_centers, tar_normals, tar_centers):
-            # Calculate the self term
-            e1 = torch.mul(torch.mm(src_normals, src_normals.permute(1, 0)),
-                           cauchy(distance(src_centers, src_centers), sigma)).sum()
-
-            # Calculate the cross term
-            e2 = torch.mul(torch.mm(tar_normals, src_normals.permute(1, 0)),
-                           cauchy(distance(src_centers, tar_centers), sigma)).sum()
-
-            e3 = torch.mul(torch.mm(tar_normals, tar_normals.permute(1, 0)),
-                           cauchy(distance(tar_centers, tar_centers), sigma)).sum()
-
-            return e1 - 2 * e2 + e3
-
-        tris = surf1_verts[surf1_inds]
-        a = tris[:, 0, :]
-        b = tris[:, 1, :]
-        c = tris[:, 2, :]
-        src_normals = 0.5 * torch.cross((a - b), (c - b), dim=1)
-        src_centers = (1 / 3.0) * tris.sum(1)
-
-        tris = surf2_verts[surf2_inds]
-        a = tris[:, 0, :]
-        b = tris[:, 1, :]
-        c = tris[:, 2, :]
-        tar_normals = 0.5 * torch.cross((a - b), (c - b), dim=1)
-        tar_centers = (1 / 3.0) * tris.sum(1)
-
-        return energy(src_normals, src_centers, tar_normals, tar_centers)
-
-    smoothing_sigma = torch.tensor(smoothing_sigma, device=device)
-
-    for i, sigma in enumerate(spatial_sigma):
-
-        orig_src_inds = src_surface.indices.clone()
-        orig_tar_inds = tar_surface.indices.clone()
-
-        comb_surface = src_surface.copy()
-        comb_surface.add_surface_(tar_surface.vertices, tar_surface.indices)
-        comb_surface.calc_normals()
-        comb_surface.calc_centers()
-
-        # Create the deformable model
-        model = DeformableCurrents.Create(
-            comb_surface,
-            mid_surface,
-            sigma=sigma,
-            kernel='cauchy',
-            device=device
-        )
-        split_vert = len(src_surface.vertices)
-        # model_stitch = StitchingCurrents(tar_surface, src_surface)
-
-        # Create a smoothing filter
-        gauss = GaussianSmoothing(smoothing_sigma, dim=3, device=device)
-
-        # Set up the optimizer
-        optimizer = optim.SGD([
-            {'params': [model.src_vertices], 'lr': deformable_lr[i]}], momentum=0.9, nesterov=True
-        )
-
-        # Now iterate
-        energy = []
-        for epoch in range(0, 1000):
-            optimizer.zero_grad()
-            loss = model()
-            loss += extra_energy(model.src_vertices[0:split_vert], orig_src_inds, model.src_vertices[split_vert:],
-                                 orig_tar_inds, sigma)
-
-            print(f'===> Iteration {epoch:3} Energy: {loss.item():.3f} ')
-            energy.append(loss.item())
-
-            loss.backward()  # Compute the gradients
-
-            # [_, fig, ax] = io.PlotSurface(tar_surface.vertices, tar_surface.indices)
-            # [src_mesh, _, _] = io.PlotSurface(model.src_vertices, model.src_indices, fig=fig, ax=ax, color=[1, 0, 0])
-            # io.PlotSurface(model.src_vertices, model.src_indices, color=[1, 0, 0], norms=model.src_vertices.grad, cents=model.src_vertices)
-
-            model.src_vertices.grad = gauss(model.src_vertices)
-            optimizer.step()  #
-
-            if epoch > 10 and np.mean(energy[-7:]) - energy[-1] < converge:
-                break
-
-        # Update the surfaces
-        src_surface.vertices = model.src_vertices.detach().clone()
-        # for surface, def_verts in zip(src_excess, optimizer.param_groups[1]['params']):
-        #     surface.vertices = def_verts.detach().clone()
-
-    return src_surface
