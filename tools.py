@@ -3,6 +3,7 @@ import math
 import torch
 import numpy as np
 import torch.optim as optim
+from collections import OrderedDict
 
 import CAMP.Core as core
 import CAMP.FileIO as io
@@ -13,19 +14,20 @@ from CAMP.Core import *
 from CAMP.UnstructuredGridOperators import *
 from CAMP.StructuredGridOperators import ApplyGrid, AffineTransform
 
-import matplotlib
-
-matplotlib.use('qt5agg')
-import matplotlib.pyplot as plt
-
-plt.ion()
+# import matplotlib
+#
+# matplotlib.use('qt5agg')
+# import matplotlib.pyplot as plt
+#
+# plt.ion()
 
 
 def affine_register(tar_surface, src_surface, affine_lr=1.0e-06, translation_lr=1.0e-04, converge=0.01,
-                    spatial_sigma=[0.5], rigid=True, device='cpu'):
+                    spatial_sigma=[0.5], rigid=True, device='cpu', plot=True):
     # Plot the surfaces
-    [_, fig, ax] = PlotSurface(tar_surface.vertices, tar_surface.indices)
-    [src_mesh, _, _] = PlotSurface(src_surface.vertices, src_surface.indices, fig=fig, ax=ax, color=[1, 0, 0])
+    if plot:
+        [_, fig, ax] = PlotSurface(tar_surface.vertices, tar_surface.indices)
+        [src_mesh, _, _] = PlotSurface(src_surface.vertices, src_surface.indices, fig=fig, ax=ax, color=[1, 0, 0])
 
     # Find the inital translation
     init_translation = (tar_surface.centers.mean(0) - src_surface.centers.mean(0)).clone()
@@ -88,7 +90,8 @@ def affine_register(tar_surface, src_surface, affine_lr=1.0e-06, translation_lr=
     # Create affine applier filter and apply
     aff_tfrom = AffineTransformSurface.Create(full_aff, device=device)
     aff_source_head = aff_tfrom(src_surface)
-    src_mesh.set_verts(aff_source_head.vertices[aff_source_head.indices].detach().cpu().numpy())
+    if plot:
+        src_mesh.set_verts(aff_source_head.vertices[aff_source_head.indices].detach().cpu().numpy())
 
     return full_aff
 
@@ -527,8 +530,14 @@ def process_mic(micicroscopic, mic_seg_file, blockface, label, device='cpu'):
 
 
 def LandmarkPicker(imList):
+
     '''Allows the user to select landmark correspondences between any number of images.
     The images must be in a list and must be formatted as numpy arrays. '''
+
+    import matplotlib
+    matplotlib.use('qt5agg')
+    import matplotlib.pyplot as plt
+    plt.ion()
 
     class PointPicker(object):
         '''Image class for picking landmarks'''
@@ -581,6 +590,26 @@ def LandmarkPicker(imList):
         lm[1] = lm[1][::-1]
 
     return landmarks
+
+
+def read_mhd_header(filename):
+
+    with open(filename, 'r') as in_mhd:
+        long_string = in_mhd.read()
+
+    short_strings = long_string.split('\n')
+    short_strings = [x for x in short_strings if x != '']
+    key_list = [x.split(' = ')[0] for x in short_strings]
+    value_list = [x.split(' = ')[1] for x in short_strings]
+    a = OrderedDict(zip(key_list, value_list))
+
+    return a
+
+
+def write_mhd_header(filename, dictionary):
+    long_string = '\n'.join(['{0} = {1}'.format(k, v) for k, v in dictionary.items()])
+    with open(filename, 'w+') as out:
+        out.write(long_string)
 
 
 if __name__ == '__main__':

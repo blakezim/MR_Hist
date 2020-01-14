@@ -120,7 +120,7 @@ def deformable_register(tar_surface, src_surface, spatial_sigma=[0.5], deformabl
     vert_max = src_surface.vertices.max(0).values
 
     # Expand beyond the min so that we contain the entire surface - 10 % should be enough
-    expansion = (vert_max - vert_min) * 0.1
+    expansion = (vert_max - vert_min) * 0.5
     vert_min -= expansion
     vert_max += expansion
 
@@ -207,8 +207,8 @@ def deformable_register(tar_surface, src_surface, spatial_sigma=[0.5], deformabl
 
 
 def register(rabbit):
-    target_file = '/home/sci/blakez/ucair/18_047/rawVolumes/ExVivo_2018-07-26/T2_Ablation_Decimate_Exvivo.obj'
-    source_file = '/home/sci/blakez/ucair/18_047/rawVolumes/PostImaging_2018-07-02/T2_Ablation_Decimate.obj'
+    target_file = '/home/sci/blakez/ucair/18_047/rawVolumes/ExVivo_2018-07-26/tumor_and_ablation_t1_exvivo.obj'
+    source_file = '/home/sci/blakez/ucair/18_047/rawVolumes/PostImaging_2018-07-02/tumor_and_ablation_t1.obj'
     save_dir = '/hdscratch/ucair/18_047/mri/invivo/'
 
     verts, faces = io.ReadOBJ(source_file)

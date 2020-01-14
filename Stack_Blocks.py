@@ -6,6 +6,8 @@ import copy
 import h5py
 import tools
 import torch
+import shutil
+import subprocess as sp
 import numpy as np
 import subprocess as sp
 import skimage.segmentation as seg
@@ -45,103 +47,57 @@ def block_stacking(rabbit):
     block_list = sorted(glob.glob(f'{rabbit_dir}block*'))
 
     # Determine the middle block
-    middle_block = block_list[len(block_list) // 2]
+    middle_block = block_list[7]
     foot_blocks = block_list[block_list.index(middle_block):]
     head_blocks = block_list[:block_list.index(middle_block) + 1][::-1]
 
     rerun = True
+    # skip_blocks = ['block01', 'block02', 'block03', 'block04', 'block05', 'block06', 'block07',
+    #                'block09', 'block11', 'block12']
+
     skip_blocks = []
 
-    # for i, block_path in enumerate(block_list):
-    #
-    #     block = block_path.split('/')[-1]
-    #     target_surface_path = f'{rabbit_dir}{block}{raw_ext}{block}_target_piece_surface.obj'
-    #     source_surface_path = f'{rabbit_dir}{block}{raw_ext}{block}_source_piece_surface.obj'
-    #
-    #     if block == 'block07':
-    #         continue
-    #
-    #     try:
-    #         verts, faces = io.ReadOBJ(target_surface_path)
-    #         tar_surface = core.TriangleMesh(verts, faces)
-    #         tar_surface.to_(device)
-    #     except IOError:
-    #         print(f'The target stitching surface for {block} was not found ... skipping')
-    #         continue
-    #
-    #     try:
-    #         verts, faces = io.ReadOBJ(source_surface_path)
-    #         src_surface = core.TriangleMesh(verts, faces)
-    #         src_surface.to_(device)
-    #         src_surface.flip_normals_()
-    #     except IOError:
-    #         print(f'The source stitching surface for {block} was not found ... skipping')
-    #         continue
-    #
-    #     extras_paths = [
-    #         f'{rabbit_dir}{block}{raw_ext}{block}_source_piece_ext.obj'
-    #     ]
-    #
-    #     # if i == 0:
-    #     #     extras_paths += [f'{rabbit_dir}{block}{raw_ext}{block}_foot.obj']
-    #     # elif i == len(block_list) - 1:
-    #     #     extras_paths += [f'{rabbit_dir}{block}{raw_ext}{block}_head.obj']
-    #     # else:
-    #     #     extras_paths += [f'{rabbit_dir}{block}{raw_ext}{block}_foot.obj']
-    #     #     extras_paths += [f'{rabbit_dir}{block}{raw_ext}{block}_head.obj']
-    #
-    #     extra_surfaces = []
-    #     for path in extras_paths:
-    #         try:
-    #             verts, faces = io.ReadOBJ(path)
-    #         except IOError:
-    #             extra_name = path.split('/')[-1]
-    #             print(f'{extra_name} not found as an extra ... removing from list')
-    #             _ = extras_paths.pop(extras_paths.index(path))
-    #             continue
-    #
-    #         extra_surfaces += [core.TriangleMesh(verts, faces)]
-    #         extra_surfaces[-1].to_(device)
-    #     # Load or create the dictionary for registration
-    #     try:
-    #         with open(f'{rabbit_dir}{block}{raw_ext}{block}_stitch_config.yaml', 'r') as f:
-    #             params = yaml.load(f, Loader=yaml.FullLoader)
-    #     except IOError:
-    #         params = {
-    #             'spatial_sigma': [1.0, 0.05],
-    #             'smoothing_sigma': [10.0, 10.0, 0.1],
-    #             'deformable_lr': [1.0e-04, 1.0e-04],
-    #             'converge': 0.01,
-    #             'rigid_transform': True,
-    #             'phi_inv_size': [25, 128, 128]
-    #         }
-    #     # Do the deformable registration
-    #     def_src_surface, def_extras, phi_inv = tools.deformable_register(
-    #         tar_surface.copy(),
-    #         src_surface.copy(),
-    #         deformable_lr=0.001,
-    #         spatial_sigma=params['spatial_sigma'],
-    #         phi_inv_size=params['phi_inv_size'],
-    #         smoothing_sigma=params['smoothing_sigma'],
-    #         src_excess=extra_surfaces,
-    #         converge=params['converge'],
-    #         device=device
-    #     )
-    #
-    #     # Save out the parameters:
-    #     with open(f'{rabbit_dir}{block}{raw_ext}{block}_stitch_config.yaml', 'w') as f:
-    #         yaml.dump(params, f)
-    #
-    #     # Save out all of the deformable transformed surfaces and phi inv
-    #     io.SaveITKFile(phi_inv, f'{rabbit_dir}{block}{vol_ext}{block}_phi_inv_stitch.mhd')
-    #     out_path = f'{rabbit_dir}{block}{raw_ext}{block}'
-    #     # if not os.path.exists(f'{out_path}_head_deformable.obj') or rerun:
-    #     io.WriteOBJ(def_src_surface.vertices, def_src_surface.indices, f'{out_path}_source_piece_surface_stitch.obj')
-    #
-    #     for extra_path, extra_surface in zip(extras_paths, def_extras):
-    #         name = extra_path.split('/')[-1].split(f'{block}')[-1].replace('.', '_stitch.')
-    #         if not os.path.exists(f'{out_path}{name}') or rerun:
-    #             io.WriteOBJ(extra_surface.vertices, extra_surface.indices, f'{out_path}{name}')
+    if rerun or not os.path.exists(f'{middle_block}{vol_ext}{middle_block.split("/")[-1]}_phi_stacking.mhd'):
+        mid_block = middle_block.split('/')[-1]
+        middle = io.LoadITKFile(f'{middle_block}{vol_ext}difference_volume.mhd')
+        middle.set_size((60, 1024, 1024))
+        deformation = core.StructuredGrid.FromGrid(middle, channels=3)
+        deformation.set_to_identity_lut_()
+        io.SaveITKFile(deformation, f'{middle_block}{vol_ext}{middle_block.split("/")[-1]}_phi_inv_stacking.mhd')
+        io.SaveITKFile(deformation, f'{middle_block}{vol_ext}{middle_block.split("/")[-1]}_phi_stacking.mhd')
+
+        affine_tform = torch.eye(4)
+        np.savetxt(f'{rabbit_dir}{mid_block}{raw_ext}{mid_block}_rigid_tform.txt', affine_tform.numpy())
+        np.savetxt(f'{rabbit_dir}{mid_block}{vol_ext}{mid_block}_rigid_tform.txt', affine_tform.numpy())
+
+        # Copy the files from raw to deformable for the middle surface
+        files = [
+            f'{rabbit_dir}{mid_block}{raw_ext}{mid_block}_decimate.obj',
+            f'{rabbit_dir}{mid_block}{raw_ext}{mid_block}_ext.obj',
+        ]
+        if os.path.exists(f'{rabbit_dir}{mid_block}{raw_ext}{mid_block}_foot.obj'):
+            files += [f'{rabbit_dir}{mid_block}{raw_ext}{mid_block}_foot.obj']
+        if os.path.exists(f'{rabbit_dir}{mid_block}{raw_ext}{mid_block}_head.obj'):
+            files += [f'{rabbit_dir}{mid_block}{raw_ext}{mid_block}_head.obj']
+        if os.path.exists(f'{rabbit_dir}{mid_block}{raw_ext}{mid_block}_foot_support.obj'):
+            files += [f'{rabbit_dir}{mid_block}{raw_ext}{mid_block}_foot_support.obj']
+        if os.path.exists(f'{rabbit_dir}{mid_block}{raw_ext}{mid_block}_head_support.obj'):
+            files += [f'{rabbit_dir}{mid_block}{raw_ext}{mid_block}_head_support.obj']
+
+        out_names = []
+        for path in files:
+            name = path.split('/')[-1].split(f'{mid_block}')[-1].replace('.', '_deformable.')
+            out_path = f'{rabbit_dir}{mid_block}{deform_ext}{mid_block}'
+            out_names += [f'{out_path}{name}']
+
+        ## Comment for stitched
+        # for i, path in enumerate(files):
+        #     stitch_name = path.split('/')[-1].split('.')[0] + '_stitched.obj'
+        #     if os.path.exists(f'{rabbit_dir}{mid_block}{raw_ext}{stitch_name}'):
+        #         files[i] = f'{rabbit_dir}{mid_block}{raw_ext}{stitch_name}'
+
+        for in_file, out_file in zip(files, out_names):
+            shutil.copy(in_file, out_file)
 
     # Loop over the foot blocks
     for i, block_path in enumerate(foot_blocks, 1):
@@ -175,11 +131,12 @@ def block_stacking(rabbit):
             print(f'The deformed surface for {source_block} already exists ... Next block')
             continue
 
+        ## Comment for stitched
         # Need to check if there are stitched surfaces
-        for i, path in enumerate(extras_paths):
-            stitch_name = path.split('/')[-1].split('.')[0] + '_stitched.obj'
-            if os.path.exists(f'{rabbit_dir}{source_block}{raw_ext}{stitch_name}'):
-                extras_paths[i] = f'{rabbit_dir}{source_block}{raw_ext}{stitch_name}'
+        # for i, path in enumerate(extras_paths):
+        #     stitch_name = path.split('/')[-1].split('.')[0] + '_stitched.obj'
+        #     if os.path.exists(f'{rabbit_dir}{source_block}{raw_ext}{stitch_name}'):
+        #         extras_paths[i] = f'{rabbit_dir}{source_block}{raw_ext}{stitch_name}'
 
         try:
             verts, faces = io.ReadOBJ(target_surface_path)
@@ -279,9 +236,9 @@ def block_stacking(rabbit):
             params = {
                 'currents_sigma': [5.0, 0.5],
                 'propagation_sigma': [1.0, 1.0, 10.0],
-                'deformable_lr': [1.0e-04],
+                'deformable_lr': [1.0e-04, 1.0e-04],
                 'converge': 0.3,
-                'grid_size': [25, 128, 128]
+                'grid_size': [20, 100, 100]
             }
 
         if 'spatial_sigma' in params.keys():
@@ -329,7 +286,7 @@ def block_stacking(rabbit):
         for extra_path, extra_surface in zip(extras_paths, def_extras):
             name = extra_path.split('/')[-1].split(f'{source_block}')[-1].replace('.', '_deformable.')
             if '_stitched' in name:
-                name.replace('_stitched', '')
+                name = name.replace('_stitched', '')
             if not os.path.exists(f'{out_path}{name}') or rerun:
                 io.WriteOBJ(extra_surface.vertices, extra_surface.indices, f'{out_path}{name}')
 
@@ -368,11 +325,12 @@ def block_stacking(rabbit):
             print(f'The deformed surface for {source_block} already exists ... Next block')
             continue
 
+        ## Comment for stitched
         # Need to check if there are stitched surfaces
-        for i, path in enumerate(extras_paths):
-            stitch_name = path.split('/')[-1].split('.')[0] + '_stitched.obj'
-            if os.path.exists(f'{rabbit_dir}{source_block}{raw_ext}{stitch_name}'):
-                extras_paths[i] = f'{rabbit_dir}{source_block}{raw_ext}{stitch_name}'
+        # for i, path in enumerate(extras_paths):
+        #     stitch_name = path.split('/')[-1].split('.')[0] + '_stitched.obj'
+        #     if os.path.exists(f'{rabbit_dir}{source_block}{raw_ext}{stitch_name}'):
+        #         extras_paths[i] = f'{rabbit_dir}{source_block}{raw_ext}{stitch_name}'
 
         try:
             verts, faces = io.ReadOBJ(target_surface_path)
@@ -472,41 +430,41 @@ def block_stacking(rabbit):
             params = {
                 'currents_sigma': [5.0, 0.5],
                 'propagation_sigma': [1.0, 1.0, 10.0],
-                'deformable_lr': [1.0e-04],
+                'deformable_lr': [1.0e-04, 1.0e-04],
                 'converge': 0.3,
-                'grid_size': [25, 128, 128]
+                'grid_size': [20, 100, 100]
             }
 
-            if 'spatial_sigma' in params.keys():
-                params['currents_sigma'] = params['spatial_sigma']
-                del params['spatial_sigma']
-            if 'phi_inv_size' in params.keys():
-                params['grid_size'] = params['phi_inv_size']
-                del params['phi_inv_size']
-            if 'rigid_transform' in params.keys():
-                del params['rigid_transform']
-            if 'smoothing_sigma' in params.keys():
-                params['propagation_sigma'] = params['smoothing_sigma']
-                del params['smoothing_sigma']
+        if 'spatial_sigma' in params.keys():
+            params['currents_sigma'] = params['spatial_sigma']
+            del params['spatial_sigma']
+        if 'phi_inv_size' in params.keys():
+            params['grid_size'] = params['phi_inv_size']
+            del params['phi_inv_size']
+        if 'rigid_transform' in params.keys():
+            del params['rigid_transform']
+        if 'smoothing_sigma' in params.keys():
+            params['propagation_sigma'] = params['smoothing_sigma']
+            del params['smoothing_sigma']
 
-            if type(params['deformable_lr']) is not list:
-                params['deformable_lr'] = [params['deformable_lr']] * len(params['spatial_sigma'])
+        if type(params['deformable_lr']) is not list:
+            params['deformable_lr'] = [params['deformable_lr']] * len(params['spatial_sigma'])
 
-            # Do the deformable registration
-            def_surface, def_extras, phi, phi_inv = tools.deformable_register(
-                tar_surface.copy(),
-                aff_src_surface.copy(),
-                currents_sigma=params['currents_sigma'],
-                prop_sigma=params['propagation_sigma'],
-                deformable_lr=params['deformable_lr'],
-                converge=params['converge'],
-                grid_size=params['grid_size'],
-                src_excess=aff_extra_surface,
-                accu_forward=True,
-                accu_inverse=True,
-                device=device,
-                grid_device='cuda:1'
-            )
+        # Do the deformable registration
+        def_surface, def_extras, phi, phi_inv = tools.deformable_register(
+            tar_surface.copy(),
+            aff_src_surface.copy(),
+            currents_sigma=params['currents_sigma'],
+            prop_sigma=params['propagation_sigma'],
+            deformable_lr=params['deformable_lr'],
+            converge=params['converge'],
+            grid_size=params['grid_size'],
+            src_excess=aff_extra_surface,
+            accu_forward=True,
+            accu_inverse=True,
+            device=device,
+            grid_device='cuda:1'
+        )
 
         # Save out the parameters:
         with open(f'{rabbit_dir}{source_block}{raw_ext}{source_block}_deformable_config.yaml', 'w') as f:
@@ -522,7 +480,7 @@ def block_stacking(rabbit):
         for extra_path, extra_surface in zip(extras_paths, def_extras):
             name = extra_path.split('/')[-1].split(f'{source_block}')[-1].replace('.', '_deformable.')
             if '_stitched' in name:
-                name.replace('_stitched', '')
+                name = name.replace('_stitched', '')
             if not os.path.exists(f'{out_path}{name}') or rerun:
                 io.WriteOBJ(extra_surface.vertices, extra_surface.indices, f'{out_path}{name}')
 

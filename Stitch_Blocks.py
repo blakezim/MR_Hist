@@ -23,7 +23,7 @@ def stitch_surfaces(rabbit):
     # Get a list of the blocks
     block_list = sorted(glob.glob(f'{rabbit_dir}block*'))
 
-    complete = []
+    complete = ['block07', 'block09']
 
     for i, block_path in enumerate(block_list):
 
