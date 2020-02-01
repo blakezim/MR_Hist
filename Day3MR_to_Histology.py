@@ -30,31 +30,44 @@ device = 'cuda:1'
 
 def mr_to_exvivo(day3_dir):
 
-    # This is registered from invivo to exvivo, so phi_inv is needed to bring the invivo MR image to the exvivo images
+    output_grid = io.LoadITKFile(
+        '/home/sci/blakez/ucair/18_047/rawVolumes/ExVivo_2018-07-26/011_----_3D_VIBE_0p5iso_cor_3ave.nii.gz',
+        device=device
+    )
+
+    aff_grid = core.StructuredGrid.FromGrid(output_grid, channels=3)
+    del output_grid
+    torch.cuda.empty_cache()
+    aff_grid.set_size((256, 256, 256), inplace=True)
+    aff_grid.set_to_identity_lut_()
+
     # Load the affine
-    aff = np.loadtxt(f'{day3_dir}surfaces/raw/invivo_to_exvivo_affine.txt')
+    aff = np.loadtxt(f'{day3_dir}surfaces/raw/exvivo_to_invivo_affine.txt')
     aff = torch.tensor(aff, device=device, dtype=torch.float32)
 
-    # Load the defromabale transformation
-    phi_inv = io.LoadITKFile(
-        f'{day3_dir}volumes/deformable/invivo_phi_inv.mhd', device=device
-    )
-    phi_inv.set_size((256, 256, 256))
-    phi_inv.data = phi_inv.data.flip(0)
-
-    # Apply the inverse affine to the deformation
-    aff = aff.inverse()
+    # Apply the FORWARD affine to the deformation
+    # aff = aff.inverse()
     a = aff[0:3, 0:3].float()
     t = aff[-0:3, 3].float()
 
-    phi_inv.data = torch.matmul(a.unsqueeze(0).unsqueeze(0),
-                                phi_inv.data.permute(list(range(1, 3 + 1)) + [0]).unsqueeze(-1))
-    phi_inv.data = (phi_inv.data.squeeze() + t).permute([-1] + list(range(0, 3)))
+    # Create a deformation from the affine that lives in the stacked blocks space
 
-    # Flip phi_inv back to the way it was
-    phi_inv.data = phi_inv.data.flip(0)
+    aff_grid.data = aff_grid.data.flip(0)
 
-    return phi_inv
+    aff_grid.data = torch.matmul(a, aff_grid.data.permute(list(range(1, 3 + 1)) + [0]).unsqueeze(-1))
+    aff_grid.data = (aff_grid.data.squeeze() + t).permute([-1] + list(range(0, 3)))
+
+    aff_grid.data = aff_grid.data.flip(0)
+
+    # Load the defromabale transformation
+    phi = io.LoadITKFile(
+        f'{day3_dir}volumes/deformable/invivo_phi.mhd', device=device
+    )
+    phi.set_size((256, 256, 256))
+
+    deformation = so.ComposeGrids.Create(device=device)([aff_grid, phi])
+
+    return deformation
 
 
 def exvivo_to_blocks(stacked_blocks_dir):
@@ -221,7 +234,6 @@ def mr_to_block(block_path, rabbit):
 
     torch.cuda.empty_cache()
 
-
     invivo_to_block = so.ComposeGrids.Create(device=device)(deformations[::-1])
     t2_to_block = so.ApplyGrid.Create(invivo_to_block, device=device, pad_mode='zeros')(t2_motion, invivo_to_block)
     io.SaveITKFile(t2_to_block, f'{invivo_out}invivo_t2_to_{block}.mhd')
@@ -258,5 +270,5 @@ if __name__ == '__main__':
     # Get a list of the blocks
     block_list = sorted(glob.glob(f'{rabbit_dir}block*'))
 
-    for block_path in block_list[7:]:
+    for block_path in block_list[6:9]:
         mr_to_block(block_path, rabbit)

@@ -52,6 +52,7 @@ def block_stacking(rabbit):
     head_blocks = block_list[:block_list.index(middle_block) + 1][::-1]
 
     rerun = True
+    rigid = True
     # skip_blocks = ['block01', 'block02', 'block03', 'block04', 'block05', 'block06', 'block07',
     #                'block09', 'block11', 'block12']
 
@@ -209,6 +210,17 @@ def block_stacking(rabbit):
         aff_extra_surface = []
         for surface in extra_surfaces:
             aff_extra_surface += [aff_tformer(surface)]
+
+        out_path = f'{rabbit_dir}{source_block}{rigid_ext}{source_block}'
+        for extra_path, extra_surface in zip(extras_paths, aff_extra_surface):
+            name = extra_path.split('/')[-1].split(f'{source_block}')[-1].replace('.', '_rigid.')
+            if '_stitched' in name:
+                name = name.replace('_stitched', '')
+            if not os.path.exists(f'{out_path}{name}') or rerun:
+                io.WriteOBJ(extra_surface.vertices, extra_surface.indices, f'{out_path}{name}')
+
+        if rigid:
+            continue
 
         # Save out the parameters:
         with open(f'{rabbit_dir}{source_block}{raw_ext}{source_block}_affine_config.yaml', 'w') as f:
@@ -403,6 +415,17 @@ def block_stacking(rabbit):
         aff_extra_surface = []
         for surface in extra_surfaces:
             aff_extra_surface += [aff_tformer(surface)]
+
+        out_path = f'{rabbit_dir}{source_block}{rigid_ext}{source_block}'
+        for extra_path, extra_surface in zip(extras_paths, aff_extra_surface):
+            name = extra_path.split('/')[-1].split(f'{source_block}')[-1].replace('.', '_rigid.')
+            if '_stitched' in name:
+                name = name.replace('_stitched', '')
+            if not os.path.exists(f'{out_path}{name}') or rerun:
+                io.WriteOBJ(extra_surface.vertices, extra_surface.indices, f'{out_path}{name}')
+
+        if rigid:
+            continue
 
         # Save out the parameters:
         with open(f'{rabbit_dir}{source_block}{raw_ext}{source_block}_affine_config.yaml', 'w') as f:

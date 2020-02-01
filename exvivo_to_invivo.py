@@ -212,12 +212,12 @@ def register(rabbit):
     save_dir = '/hdscratch/ucair/18_047/mri/invivo/'
 
     verts, faces = io.ReadOBJ(source_file)
-    src_surface = core.TriangleMesh(verts, faces)
-    src_surface.to_(device=device)
+    invivo_surface = core.TriangleMesh(verts, faces)
+    invivo_surface.to_(device=device)
 
     verts, faces = io.ReadOBJ(target_file)
-    tar_surface = core.TriangleMesh(verts, faces)
-    tar_surface.to_(device=device)
+    exvivo_surface = core.TriangleMesh(verts, faces)
+    exvivo_surface.to_(device=device)
 
     print('Starting Affine ... ')
     # Load or create the dictionary for registration
@@ -233,12 +233,12 @@ def register(rabbit):
         }
 
     try:
-        aff = np.loadtxt(f'{save_dir}surfaces/raw/invivo_to_exvivo_affine.txt')
+        aff = np.loadtxt(f'{save_dir}surfaces/raw/exvivo_to_invivo_affine.txt')
         aff = torch.tensor(aff, device=device)
     except IOError:
         aff = affine(
-            tar_surface.copy(),
-            src_surface.copy(),
+            invivo_surface.copy(), #Target
+            exvivo_surface.copy(),
             affine_lr=params['affine_lr'],
             translation_lr=params['translation_lr'],
             converge=params['converge'],
@@ -248,13 +248,13 @@ def register(rabbit):
         # Save out the parameters:
         with open(f'{save_dir}surfaces/raw/affine_config.yaml', 'w') as f:
             yaml.dump(params, f)
-        np.savetxt(f'{save_dir}surfaces/raw/invivo_to_exvivo_affine.txt', aff.cpu().numpy())
+        np.savetxt(f'{save_dir}surfaces/raw/exvivo_to_invivo_affine.txt', aff.cpu().numpy())
 
     aff_tfrom = uo.AffineTransformSurface.Create(aff, device=device)
-    aff_source = aff_tfrom(src_surface)
+    aff_exvivo = aff_tfrom(exvivo_surface)
 
-    io.WriteOBJ(aff_source.vertices, aff_source.indices,
-                f'{save_dir}surfaces/affine/invivo_to_exvivo_{rabbit}_affine.obj')
+    io.WriteOBJ(aff_exvivo.vertices, aff_exvivo.indices,
+                f'{save_dir}surfaces/affine/exvivo_to_invivo_{rabbit}_affine.obj')
 
     print('Starting Deformable ... ')
     try:
@@ -263,22 +263,26 @@ def register(rabbit):
     except IOError:
         params = {
             'spatial_sigma': [5.0, 2.0],
-            'smoothing_sigma': [100.0, 100.0, 100.0],
-            'deformable_lr': 1.0e-04,
-            'converge': 1.0,
-            'phi_inv_size': [54, 54, 54]
+            'smoothing_sigma': [10.0, 10.0, 10.0],
+            'deformable_lr': [1.0e-04, 1.0e-04],
+            'converge': 0.5,
+            'phi_inv_size': [32, 32, 32]
         }
 
-    def_surface, phi_inv = deformable_register(
-        tar_surface.copy(),
-        aff_source.copy(),
-        deformable_lr = params['deformable_lr'],
+    def_surface, _, phi, phi_inv = tools.deformable_register(
+        invivo_surface.copy(),
+        aff_exvivo.copy(),
+        src_excess=None,
+        deformable_lr=params['deformable_lr'],
+        currents_sigma=params['spatial_sigma'],
+        prop_sigma=params['smoothing_sigma'],
         converge=params['converge'],
-        spatial_sigma=params['spatial_sigma'],
-        smoothing_sigma=params['smoothing_sigma'],
+        grid_size=params['phi_inv_size'],
+        accu_forward=True,
+        accu_inverse=True,
         device=device,
-        phi_inv_size=params['phi_inv_size'],
-        phi_device='cuda:0'
+        grid_device='cuda:0',
+        expansion_factor=1.0
     )
 
     # Save out the parameters:
@@ -286,8 +290,9 @@ def register(rabbit):
         yaml.dump(params, f)
 
     io.SaveITKFile(phi_inv, f'{save_dir}volumes/deformable/invivo_phi_inv.mhd')
+    io.SaveITKFile(phi, f'{save_dir}volumes/deformable/invivo_phi.mhd')
     io.WriteOBJ(def_surface.vertices, def_surface.indices,
-                f'{save_dir}surfaces/deformable/invivo_to_exvivo_deformable.obj')
+                f'{save_dir}surfaces/deformable/exvivo_to_invivo_deformable.obj')
 
 
 def apply_to_images(rabbit):
@@ -356,4 +361,4 @@ def apply_to_images(rabbit):
 if __name__ == '__main__':
     rabbit = '18_047'
     register(rabbit)
-    apply_to_images(rabbit)
+    # apply_to_images(rabbit)

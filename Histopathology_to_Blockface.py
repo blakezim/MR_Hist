@@ -100,7 +100,7 @@ def solve_affine(histology, blockface, out_dir, device='cpu'):
     return aff_histopathology, opt_affine
 
 
-def deformable_histology_to_blockface(histology, blockface, scales, steps, gauss=True):
+def deformable_histology_to_blockface(histology, blockface, scales, steps, gauss=True, mic=None):
     deformation = blockface.clone()
     deformation.set_to_identity_lut_()
     deformation_list = []
@@ -155,9 +155,22 @@ def deformable_histology_to_blockface(histology, blockface, scales, steps, gauss
 
         energy = [match.initial_energy]
         print(f'Iteration: 0   Energy: {match.initial_energy}')
+
         for i in range(1, 500):
             energy.append(match.step())
             print(f'Iteration: {i}   Energy: {energy[-1]}')
+
+            # temp_def = match.get_field().clone()
+            # temp_def.set_size(mic.size, inplace=True)
+            # def_mic = so.ApplyGrid.Create(temp_def, device=device)(mic, temp_def)
+            #
+            # plt.figure()
+            # plt.imshow(def_mic.data.permute(1, 2, 0).cpu())
+            # plt.axis('off')
+            # plt.gca().invert_yaxis()
+            # plt.savefig(f'/home/sci/blakez/ucair/Animations/Scrolls/MicReg/Images/{i:03d}_image.png', dpi=500, bbox_inches='tight', pad_inches=0)
+            # plt.close('all')
+            # del temp_def, def_mic
 
             if i > 10 and np.mean(energy[-10:]) - energy[-1] < 0.001:
                 break
@@ -199,7 +212,7 @@ def register_histopathology_to_blockface(rabbit, block, img_num, bf_slice):
     try:
         blockface_seg = io.LoadITKFile(f'{blockface_dir}volumes/raw/hd_labels/IMG_{img_num}_hd_label_{block}.nrrd',
                                        device=device)
-    except IOError:
+    except:
         blockface_seg = io.LoadITKFile(f'{blockface_dir}volumes/raw/segmentation_volume.mhd',
                                        device=device)
     # Extract the slice
@@ -208,12 +221,39 @@ def register_histopathology_to_blockface(rabbit, block, img_num, bf_slice):
     aff_seg, affine = solve_affine(histology_seg, blockface_seg, out_dir=out_dir, device=device)
     np.savetxt(f'{out_dir}/img_affine_to_blockface.txt', affine.cpu().numpy())
 
+    #### Apply the affine to the image
+    mic_file = f'{histology_dir}hdf5/{block}_img{img_num}_image.hdf5'
+
+    meta_dict = {}
+    with h5py.File(mic_file, 'r') as f:
+        mic = f['RawImage/ImageData'][:, ::10, ::10]
+        for key in f['RawImage'].attrs:
+            meta_dict[key] = f['RawImage'].attrs[key]
+
+    mic = core.StructuredGrid(
+        mic.shape[1:],
+        tensor=torch.tensor(mic, dtype=torch.float32, device=device),
+        spacing=torch.tensor([10.0, 10.0], dtype=torch.float32, device=device),
+        device=device,
+        dtype=torch.float32,
+        channels=3
+    )
+
+    mic = (mic - mic.min()) / (mic.max() - mic.min())
+    aff_mic = so.AffineTransform.Create(affine=affine)(mic, blockface_seg)
+    # plt.figure()
+    # plt.imshow(aff_mic.data.permute(1,2,0).cpu())
+    # plt.axis('off')
+    # plt.gca().invert_yaxis()
+    # plt.savefig(f'/home/sci/blakez/ucair/Animations/Scrolls/Mic/Images/{blockface_slice}_image.png', dpi=500, bbox_inches='tight', pad_inches=0)
+
     def_histology, deformation = deformable_histology_to_blockface(
         aff_seg,
         blockface_seg,
         steps=[0.005, 0.001],
         scales=[4, 1],
-        gauss=True
+        gauss=True,
+        mic=aff_mic
     )
 
     # Save out the deformation
@@ -454,8 +494,8 @@ def apply_deformation_to_histology(rabbit, block, img_num):
 
 if __name__ == '__main__':
     rabbit = '18_047'
-    block = 'block08'
-    img = '036'
-    blockface_slice = 36
+    block = 'block07'
+    img = '040'
+    blockface_slice = 40
     register_histopathology_to_blockface(rabbit, block, img, blockface_slice)
-    apply_deformation_to_histology(rabbit, block, img)
+    # apply_deformation_to_histology(rabbit, block, img)

@@ -98,7 +98,8 @@ def affine_register(tar_surface, src_surface, affine_lr=1.0e-06, translation_lr=
 
 def deformable_register(tar_surface, src_surface, src_excess=None, deformable_lr=1.0e-04,
                         currents_sigma=None, prop_sigma=None, converge=0.3, grid_size=None,
-                        accu_forward=False, accu_inverse=False, device='cpu', grid_device='cpu'):
+                        accu_forward=False, accu_inverse=False, device='cpu', grid_device='cpu',
+                        expansion_factor=0.1, iters=200):
     if currents_sigma is None:
         currents_sigma = [0.5]
     if prop_sigma is None:
@@ -135,7 +136,7 @@ def deformable_register(tar_surface, src_surface, src_excess=None, deformable_lr
         vert_max = extent_verts.max(0).values
 
         # Expand beyond the min so that we contain the entire surface - 10 % should be enough
-        expansion = (vert_max - vert_min) * 0.1
+        expansion = (vert_max - vert_min) * expansion_factor
         vert_min -= expansion
         vert_max += expansion
 
@@ -191,7 +192,7 @@ def deformable_register(tar_surface, src_surface, src_excess=None, deformable_lr
 
         # Now iterate
         energy = []
-        for epoch in range(0, 200):
+        for epoch in range(0, iters):
             optimizer.zero_grad()
             loss = model()
 
@@ -256,7 +257,7 @@ def deformable_register(tar_surface, src_surface, src_excess=None, deformable_lr
     elif accu_inverse:
         return src_surface, src_excess, phi_inv
     else:
-        return src_surface, src_excess,
+        return src_surface, src_excess
 
 
 def stitch_surfaces(tar_surface, src_surface, reference_surface, src_excess=None, deformable_lr=1.0e-04,

@@ -28,7 +28,7 @@ def draw_contours(rabbit):
         mic_list = sorted(glob.glob(f'{block_path}/raw/*_image.tif'))
         img_nums = [x.split('/')[-1].split('_')[1] for x in mic_list]
 
-        for img in img_nums:
+        for img in img_nums[2:]:
 
             mic_file = f'{raw_mic_dir}{block}/segmentations/IMG_{img}/img_{img}_color.nii.gz'
             healthy_file = f'{raw_mic_dir}{block}/segmentations/IMG_{img}/img_{img}_healthy_tissue.nrrd'
@@ -49,7 +49,7 @@ def draw_contours(rabbit):
             #     dtype=torch.float32,
             #     channels=3
             # )
-            save = True
+            save = False
             contour_width = 1.0
             mic = io.LoadITKFile(mic_file, device=device)
             parts = [io.LoadITKFile(healthy_file, device=device)]

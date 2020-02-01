@@ -20,7 +20,7 @@ plt.ion()
 device = 'cuda:1'
 
 
-def generate_figures(slice, segs, out_path, base_name, save=True):
+def generate_figures(slice, segs, out_path, base_name, save=True, extra_cont=None):
 
     contour_width = 0.8
     shape = slice.data.permute(1, 2, 0).shape[0:2]
@@ -69,13 +69,18 @@ def generate_figures(slice, segs, out_path, base_name, save=True):
     plt.figure()
     plt.imshow(slice.data.permute(1, 2, 0).squeeze().cpu(), cmap='gray')
     plt.plot([y_off, y_off + scale_pix], [shape[0] - x_off, shape[0] - x_off], 'w-', linewidth=contour_width)
-    for contour in part_contours[0]:
-        plt.plot(contour[:, 1], contour[:, 0], color='crimson', linewidth=contour_width)
-    try:
-        for contour in part_contours[1]:
-            plt.plot(contour[:, 1], contour[:, 0], 'lime', linewidth=contour_width)
-    except IndexError:
-        pass
+    # for contour in part_contours[0]:
+    #     plt.plot(contour[:, 1], contour[:, 0], color='crimson', linewidth=contour_width)
+
+    if extra_cont:
+        for contour in extra_cont:
+            plt.plot(contour[:, 1], contour[:, 0], 'blue', linewidth=contour_width)
+
+    # try:
+    #     for contour in part_contours[1]:
+    #         plt.plot(contour[:, 1], contour[:, 0], 'lime', linewidth=contour_width)
+    # except IndexError:
+    #     pass
 
     try:
         for contour in part_contours[2]:
@@ -199,12 +204,14 @@ def sample_on_histopathology(rabbit, block, img_num, bf_slice):
     mr_day0_t2_slice = get_mr_slice(f'{day0_dir}/day0_t2_to_{block}.mhd', blockface, bf_slice - 1, sd)
     mr_day0_ctd_slice = get_mr_slice(f'{day0_dir}/day0_ctd_to_{block}.mhd', blockface, bf_slice - 1, sd)
     mr_day0_t1_slice = get_mr_slice(f'{day0_dir}/day0_ce_t1_to_{block}.mhd', blockface, bf_slice - 1, sd)
+    mr_day0_npv_slice = get_mr_slice(f'{day0_dir}/day0_npv_to_{block}.mhd', blockface, bf_slice - 1, sd)
 
     io.SaveITKFile(mr_invivo_t1_slice, f'{invivo_mr_out_path}/invivo_ce_t1_as_bf_img_{img_num}.mhd')
     io.SaveITKFile(mr_invivo_t2_slice, f'{invivo_mr_out_path}/invivo_t2_as_bf_img_{img_num}.mhd')
     io.SaveITKFile(mr_day0_t2_slice, f'{day0_mr_out_path}/day0_t2_as_bf_img_{img_num}.mhd')
     io.SaveITKFile(mr_day0_ctd_slice, f'{day0_mr_out_path}/day0_ctd_as_bf_img_{img_num}.mhd')
     io.SaveITKFile(mr_day0_t1_slice, f'{day0_mr_out_path}/day0_ce_t1_as_bf_img_{img_num}.mhd')
+    io.SaveITKFile(mr_day0_npv_slice, f'{day0_mr_out_path}/day0_ce_t1_as_bf_img_{img_num}.mhd')
 
     del blockface, phi_inv, phi_inv_data
     torch.cuda.empty_cache()
@@ -219,6 +226,13 @@ def sample_on_histopathology(rabbit, block, img_num, bf_slice):
     mr_day0_t2_slice = histology_seg * mr_day0_t2_slice
     mr_day0_ctd_slice = histology_seg * mr_day0_ctd_slice
     mr_day0_t1_slice = histology_seg * mr_day0_t1_slice
+    mr_day0_npv_slice = histology_seg * mr_day0_npv_slice
+
+    mr_day0_ctd_slice.data[mr_day0_ctd_slice.data < 0.5] = 0.0
+    mr_day0_ctd_slice.data[mr_day0_ctd_slice.data >= 0.5] = 1.0
+
+    mr_day0_npv_slice.data[mr_day0_npv_slice.data < 0.5] = 0.0
+    mr_day0_npv_slice.data[mr_day0_npv_slice.data >= 0.5] = 1.0
 
     hist_map = core.StructuredGrid.FromGrid(segs[0])
     for i, seg in enumerate(segs, 1):
@@ -250,6 +264,27 @@ def sample_on_histopathology(rabbit, block, img_num, bf_slice):
 
     plt.close('all')
 
+    # Generate the figure for showing the NPV on the Day0 MRI CE T1
+    contours = measure.find_contours(mr_day0_npv_slice.data.squeeze().cpu().numpy(), 0.5)
+
+    # Plot the image with contours
+    plt.figure()
+    plt.imshow(mr_day0_t1_slice.data.permute(1, 2, 0).squeeze().cpu(), cmap='gray')
+    for contour in contours:
+        plt.plot(contour[:, 1], contour[:, 0], color='blue', linewidth=0.8)
+    plt.axis('off')
+    plt.show()
+    plt.pause(1.0)
+    if save:
+        plt.savefig(f'{invivo_mr_out_path}/day0_npv_with_contours.png', dpi=600, bbox_inches='tight', pad_inches=0)
+
+    plt.close('all')
+
+    generate_figures(
+        mr_day0_npv_slice, segs, out_path=day0_mr_out_path, base_name='deformed_npv', save=save,
+        extra_cont=contours
+    )
+
     generate_figures(
         histology_image, segs, out_path=invivo_mr_out_path, base_name='deformed_histology', save=save
     )
@@ -279,7 +314,7 @@ def sample_on_histopathology(rabbit, block, img_num, bf_slice):
 
 if __name__ == '__main__':
     rabbit = '18_047'
-    block = 'block08'
-    img = '036'
-    blockface_slice = 36
+    block = 'block09'
+    img = '015'
+    blockface_slice = 16
     sample_on_histopathology(rabbit, block, img, blockface_slice)

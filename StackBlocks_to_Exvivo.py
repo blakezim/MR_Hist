@@ -1,6 +1,7 @@
 import sys
 sys.path.append("/home/sci/blakez/code/")
 import yaml
+import glob
 import tools
 import torch
 import numpy as np
@@ -10,7 +11,7 @@ import CAMP.FileIO as io
 import CAMP.UnstructuredGridOperators as uo
 import CAMP.StructuredGridOperators as so
 
-device = 'cuda:2'
+device = 'cuda:3'
 
 
 def affine(tar_surface, src_surface, affine_lr=1.0e-07, translation_lr=1.0e-06, converge=1.0,
@@ -118,14 +119,29 @@ def register(rabbit):
             device=device
         )
         # Save out the parameters:
-        with open(f'{save_dir}/affine_config.yaml', 'w') as f:
-            yaml.dump(params, f)
-        np.savetxt(f'{save_dir}/blocks_to_exvivo_affine.txt', aff.cpu().numpy())
+        # with open(f'{save_dir}/affine_config.yaml', 'w') as f:
+        #     yaml.dump(params, f)
+        # np.savetxt(f'{save_dir}/blocks_to_exvivo_affine.txt', aff.cpu().numpy())
 
     aff_tfrom = uo.AffineTransformSurface.Create(aff, device=device)
     aff_source = aff_tfrom(src_surface)
 
-    io.WriteOBJ(aff_source.vertices, aff_source.indices, f'{save_dir}/affine_blocks_{rabbit}.obj')
+    # io.WriteOBJ(aff_source.vertices, aff_source.indices, f'{save_dir}/affine_blocks_{rabbit}.obj')
+
+    block_paths = sorted(glob.glob('/home/sci/blakez/ucair/deformable/*'))
+    extras_paths = [f'{path}/{path.split("/")[-1]}_deformable_to_exvivo.obj' for path in block_paths]
+    extra_surfaces = []
+    for path in extras_paths:
+        try:
+            verts, faces = io.ReadOBJ(path)
+        except IOError:
+            extra_name = path.split('/')[-1]
+            print(f'{extra_name} not found as an extra ... removing from list')
+            _ = extras_paths.pop(extras_paths.index(path))
+            continue
+
+        extra_surfaces += [core.TriangleMesh(verts, faces)]
+        extra_surfaces[-1].to_(device)
 
     print('Starting Deformable ... ')
     try:
@@ -155,28 +171,47 @@ def register(rabbit):
     if type(params['deformable_lr']) is not list:
         params['deformable_lr'] = [params['deformable_lr']] * len(params['currents_sigma'])
 
-    def_surface, def_excess, phi, phi_inv = tools.deformable_register(
-        tar_surface.copy(),
-        aff_source.copy(),
-        src_excess=None,
-        deformable_lr=params['deformable_lr'],
-        currents_sigma=params['currents_sigma'],
-        prop_sigma=params['propagation_sigma'],
-        converge=params['converge'],
-        grid_size=params['grid_size'],
-        accu_forward=True,
-        accu_inverse=True,
-        device=device,
-        grid_device='cuda:3'
-    )
+    # def_surface, def_excess, phi, phi_inv = tools.deformable_register(
+    #     tar_surface.copy(),
+    #     aff_source.copy(),
+    #     src_excess=extra_surfaces,
+    #     deformable_lr=params['deformable_lr'],
+    #     currents_sigma=params['currents_sigma'],
+    #     prop_sigma=params['propagation_sigma'],
+    #     converge=params['converge'],
+    #     grid_size=params['grid_size'],
+    #     accu_forward=True,
+    #     accu_inverse=True,
+    #     device=device,
+    #     grid_device='cuda:3'
+    # )
+    def_surface, def_excess = tools.deformable_register(
+            tar_surface.copy(),
+            aff_source.copy(),
+            src_excess=extra_surfaces,
+            deformable_lr=params['deformable_lr'],
+            currents_sigma=params['currents_sigma'],
+            prop_sigma=params['propagation_sigma'],
+            converge=params['converge'],
+            grid_size=params['grid_size'],
+            accu_forward=False,
+            accu_inverse=False,
+            device=device,
+            grid_device='cuda:2'
+        )
+
+    out_path = f'/home/sci/blakez/ucair/to_exvivo/'
+    for extra_path, extra_surface, block_path in zip(extras_paths, def_excess, block_paths):
+        block = block_path.split('/')[-1]
+        io.WriteOBJ(extra_surface.vertices, extra_surface.indices, f'{out_path}/{block}/{block}_as_exvivo.obj')
 
     # Save out the parameters:
-    with open(f'{save_dir}/deformable_config.yaml', 'w') as f:
-        yaml.dump(params, f)
-
-    io.SaveITKFile(phi_inv, f'{save_dir}/blocks_phi_inv_to_exvivo.mhd')
-    io.SaveITKFile(phi, f'{save_dir}/blocks_phi_to_exvivo.mhd')
-    io.WriteOBJ(def_surface.vertices, def_surface.indices, f'{save_dir}/deformable_blocks_{rabbit}.obj')
+    # with open(f'{save_dir}/deformable_config.yaml', 'w') as f:
+    #     yaml.dump(params, f)
+    #
+    # io.SaveITKFile(phi_inv, f'{save_dir}/blocks_phi_inv_to_exvivo.mhd')
+    # io.SaveITKFile(phi, f'{save_dir}/blocks_phi_to_exvivo.mhd')
+    # io.WriteOBJ(def_surface.vertices, def_surface.indices, f'{save_dir}/deformable_blocks_{rabbit}.obj')
 
 
 if __name__ == '__main__':
