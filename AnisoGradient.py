@@ -39,105 +39,128 @@ def box_image(Im, break_width=50, center=None, val=1.0):
 
     return Im
 
-def diffusion(im, weight):
 
-    grads = so.Gradient.Create(dim=2, device=device)(im)
-    update = so.Divergence.Create(dim=2, device=device)(grads * weight)
+def diffuse(im, weight, iter=50000, gamma=0.0005):
 
-    return update.data.squeeze()
+    imgout = im.clone()
+
+    # initialize some internal variables
+    deltaS = torch.zeros_like(imgout)
+    deltaE = deltaS.clone()
+    NS = deltaS.clone()
+    EW = deltaS.clone()
+    # gS = torch.ones_like(imgout)
+
+    for _ in np.arange(1, iter):
+        deltaS[:-1, :] = imgout[1:, :] - imgout[:-1, :]
+        deltaE[:, :-1] = imgout[:, 1:] - imgout[:, :-1]
+
+        # update matrices
+        E = weight * deltaE
+        S = weight * deltaS
+
+        # subtract a copy that has been shifted 'North/West' by one
+        # pixel. don't as questions. just do it. trust me.
+        NS[:] = S
+        EW[:] = E
+        NS[1:, :] -= S[:-1, :]
+        EW[:, 1:] -= E[:, :-1]
+
+        # update the image
+        imgout += gamma * (NS + EW)
+
+    return imgout
+
 
 def example():
 
-    gamma = 0.2
-    n_iters = 1000
-
-
-
-    f = box_image(core.StructuredGrid((256, 256), device=device))
-    d = box_image(core.StructuredGrid((256, 256), device=device), break_width=40, val=10.0)
-
-    fluid_kernel = so.FluidKernel.Create(f, device=device)
+    f = box_image(core.StructuredGrid((256, 256), spacing=[1.0, 1.0], device=device))
+    d = box_image(core.StructuredGrid((256, 256), spacing=[1.0, 1.0], device=device), break_width=50, val=500.0) + 0.1
+    m = box_image(core.StructuredGrid((256, 256), spacing=[1.0, 1.0], device=device), break_width=50, val=1.0)
 
     f = so.Gaussian.Create(channels=1, kernel_size=5, sigma=2, dim=2, device=device)(f)
-    grads = so.Gradient.Create(dim=2, device=device)(f)
+    grads = so.Gradient.Create(dim=2, device=device)(f) * m
+    orig_grads = grads.copy()
 
-    smooth_grads = grads.clone()
-    for itr in range(0, n_iters):
+    phi_inv = core.StructuredGrid((256, 256), spacing=[1.0, 1.0], device=device)
+    phi_inv.set_to_identity_lut_()
 
-        x = core.StructuredGrid.FromGrid(f, tensor=smooth_grads[0].unsqueeze(0), channels=1)
-        y = core.StructuredGrid.FromGrid(f, tensor=smooth_grads[1].unsqueeze(0), channels=1)
-        x_update = gamma * diffusion(x, weight=d)
-        y_update = gamma * diffusion(y, weight=d)
+    id = phi_inv.copy()
 
-        smooth_grads += core.StructuredGrid.FromGrid(f, tensor=torch.stack((x_update, y_update), 0), channels=2)
+    for i in range(0, 6):
+
+        diffuse_x_grad = grads[0].data
+        diffuse_y_grad = diffuse(grads[1].data, d.data.squeeze())
+
+        # Scale back up the gradients
+        y_scale = (grads[1].max() - grads[1].min()) / (diffuse_y_grad.max() - diffuse_y_grad.min())
+
+        update = core.StructuredGrid.FromGrid(
+            f, tensor=torch.stack((diffuse_x_grad, y_scale * diffuse_y_grad), 0), channels=2
+        )
+
+        sample = id.clone() + 20.0 * update
+        phi_inv = so.ApplyGrid.Create(sample, pad_mode='border', device=update.device, dtype=update.dtype)(phi_inv)
+
+        # update the gradients
+        f = so.ApplyGrid.Create(phi_inv, device=device)(f)
+        d = so.ApplyGrid.Create(phi_inv, device=device)(d)
+        m = so.ApplyGrid.Create(phi_inv, device=device)(m)
+        grads = so.Gradient.Create(dim=2, device=device)(f) * m
+
+        print(f'Iter {i}/5 done...')
+
+    test = so.ApplyGrid.Create(phi_inv, device=device)(f)
+
+    plt.figure()
+    plt.imshow(d.cpu())
+    plt.colorbar()
+    plt.title('Diffusion Coefficient')
+
+    plt.figure()
+    plt.imshow(imgout.cpu())
+    plt.colorbar()
+    plt.title('Diffused Gradients')
+    #
+    plt.figure()
+    plt.imshow(grads[1].squeeze().cpu())
+    plt.colorbar()
+    plt.title('Starting Gradients')
+    #
+    # def_grid = id.copy()
+    # def_grid.set_to_identity_lut_()
+    # def_grid += smooth_grads
+    #
+    # phi_inv = so.ApplyGrid.Create(def_grid, device=device)(phi_inv)
+    #
+    # def_image = so.ApplyGrid.Create(phi_inv, device=device)(f)
+    #
+    # plt.figure()
+    # plt.imshow(def_image.data.squeeze().cpu() - f.data.squeeze().cpu())
+    # plt.colorbar()
+    # plt.title('Difference Of Images')
+    #
+    # plt.figure()
+    # plt.imshow(def_image.data.squeeze().cpu())
+    # plt.title('Deformed Image')
 
     print('something')
 
-    # x_loc, y_loc = torch.meshgrid(torch.arange(0, 256), torch.arange(0, 256))
-    # plt.quiver(y_loc, x_loc, grads.data[1].cpu(), grads.data[0].cpu())
-    # imgout = grads[1].squeeze().cpu().numpy().copy()
+def example_fluid():
 
-    # initialize some internal variables
-    # deltaS = np.zeros_like(imgout)
-    # deltaE = deltaS.copy()
-    # NS = deltaS.copy()
-    # EW = deltaS.copy()
-    # gS = np.ones_like(imgout)
-    # gE = gS.copy()
+    f = box_image(core.StructuredGrid((256, 256), spacing=[0.05, 0.05], device=device))
+    d = box_image(core.StructuredGrid((256, 256), spacing=[0.05, 0.05], device=device), break_width=46, val=100.0)
 
-    # niter = 5000
-    # kappa = 100
-    # gamma = 0.2
-    # step = (1., 1.)
-    # option = 1
-    #
-    # for ii in np.arange(1, niter):
-    #
-    #     # calculate the diffs
-    #     deltaS[:-1, :] = np.diff(imgout, axis=0)
-    #     deltaE[:, :-1] = np.diff(imgout, axis=1)
-    #
-    #     # if 0 < sigma:
-    #     #     deltaSf = flt.gaussian_filter(deltaS, sigma);
-    #     #     deltaEf = flt.gaussian_filter(deltaE, sigma);
-    #     # else:
-    #     deltaSf = deltaS;
-    #     deltaEf = deltaE;
-    #
-    #     # conduction gradients (only need to compute one per dim!)
-    #     # if option == 1:
-    #     #     gS = np.exp(-(deltaSf / kappa) ** 2.) / step[0]
-    #     #     gE = np.exp(-(deltaEf / kappa) ** 2.) / step[1]
-    #     # elif option == 2:
-    #     #     gS = 1. / (1. + (deltaSf / kappa) ** 2.) / step[0]
-    #     #     gE = 1. / (1. + (deltaEf / kappa) ** 2.) / step[1]
-    #
-    #     # update matrices
-    #     E = d.data.squeeze().cpu().numpy() * deltaE
-    #     S = d.data.squeeze().cpu().numpy() * deltaS
-    #     # E = gE * deltaE
-    #     # S = gS * deltaS
-    #
-    #     # subtract a copy that has been shifted 'North/West' by one
-    #     # pixel. don't as questions. just do it. trust me.
-    #     NS[:] = S
-    #     EW[:] = E
-    #
-    #     is_nan = np.isnan(E)
-    #     if is_nan.any():
-    #         break
-    #
-    #     NS[1:, :] -= S[:-1, :]
-    #     EW[:, 1:] -= E[:, :-1]
-    #
-    #     # update the image
-    #     imgout += gamma * (NS + EW)
-    #     # is_nan = np.isnan(NS)
-    #     # if is_nan.any():
-    #     #     break
+    f = so.Gaussian.Create(channels=1, kernel_size=5, sigma=2, dim=2, device=device)(f)
+    grads = so.Gradient.Create(dim=2, device=device)(f) * 100
 
+    fluid_kernel = so.FluidKernel.Create(f, device=device)
 
-    # print('something')
+    # Flow the gradients
+
+    # Compute the gradients of the x
+    x = core.StructuredGrid.FromGrid(f, tensor=grads[1].unsqueeze(0), channels=1)
+    x_grads = so.Gradient.Create(dim=2, device=device)(grads[1])
 
 if __name__ == '__main__':
     example()
