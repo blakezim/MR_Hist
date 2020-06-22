@@ -1,0 +1,6 @@
+python is /home/sci/blakez/software/anaconda3/envs/MR_Hist/bin/python
+Running with GPU Index 0,1
+Traceback (most recent call last):
+  File "../histology_seg.py", line 18, in <module>
+    from Histology.NNSeg.dataset import TrainDataset, EvalDataset
+ModuleNotFoundError: No module named 'Histology'

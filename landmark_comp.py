@@ -9,9 +9,12 @@ import h5py
 import tools
 import torch
 import numpy as np
+import pandas as pd
+from statsmodels.stats.anova import AnovaRM
 import torch.nn.functional as F
 import subprocess as sp
 import skimage.segmentation as seg
+from GenerateDeformation import generate, generate_affine_only
 
 from collections import OrderedDict
 import torch.optim as optim
@@ -29,197 +32,6 @@ import CAMP.StructuredGridOperators as so
 
 device = 'cuda:1'
 
-#### ADDED ####
-def mr_to_exvivo(day3_dir):
-
-    output_grid = io.LoadITKFile(
-        '/home/sci/blakez/ucair/18_047/rawVolumes/ExVivo_2018-07-26/011_----_3D_VIBE_0p5iso_cor_3ave.nii.gz',
-        device=device
-    )
-
-    aff_grid = core.StructuredGrid.FromGrid(output_grid, channels=3)
-    del output_grid
-    torch.cuda.empty_cache()
-    aff_grid.set_size((256, 256, 256), inplace=True)
-    aff_grid.set_to_identity_lut_()
-
-    # Load the affine
-    aff = np.loadtxt(f'{day3_dir}surfaces/raw/exvivo_to_invivo_affine.txt')
-    aff = torch.tensor(aff, device=device, dtype=torch.float32)
-
-    # Apply the FORWARD affine to the deformation
-    # aff = aff.inverse()
-    a = aff[0:3, 0:3].float()
-    t = aff[-0:3, 3].float()
-
-    # Create a deformation from the affine that lives in the stacked blocks space
-
-    aff_grid.data = aff_grid.data.flip(0)
-
-    aff_grid.data = torch.matmul(a, aff_grid.data.permute(list(range(1, 3 + 1)) + [0]).unsqueeze(-1))
-    aff_grid.data = (aff_grid.data.squeeze() + t).permute([-1] + list(range(0, 3)))
-
-    aff_grid.data = aff_grid.data.flip(0)
-
-    # Load the defromabale transformation
-    phi = io.LoadITKFile(
-        f'{day3_dir}volumes/deformable/invivo_phi.mhd', device=device
-    )
-    phi.set_size((256, 256, 256))
-
-    deformation = so.ComposeGrids.Create(device=device)([aff_grid, phi])
-
-    return deformation
-
-
-def exvivo_to_blocks(stacked_blocks_dir):
-
-    # This is registered from blocks to exvivo, so phi is needed to bring the exvivo MR image to the block images
-    # Need to determine the grid to sample the MR onto
-    rabbit_dir = f'/hdscratch/ucair/{rabbit}/blockface/'
-    block_list = sorted(glob.glob(f'{rabbit_dir}block*'))
-    orig_dir = f'/home/sci/blakez/ucair/{rabbit}/rawVolumes/ExVivo_2018-07-26/'
-    spacing = []
-    origin = []
-    size = []
-    for block_path in block_list:
-
-        if 'block07' in block_path:
-            hdr = tools.read_mhd_header(f'{block_path}/volumes/raw/difference_volume.mhd')
-        else:
-            hdr = tools.read_mhd_header(f'{block_path}/volumes/deformable/difference_volume_deformable.mhd')
-        spacing.append(np.array([float(x) for x in hdr['ElementSpacing'].split(' ')]))
-        origin.append(np.array([float(x) for x in hdr['Offset'].split(' ')]))
-        size.append(np.array([float(x) for x in hdr['DimSize'].split(' ')]))
-    spacing = np.stack(spacing)
-    origin = np.stack(origin)
-    size = np.stack(size)
-
-    extent = size * spacing + origin
-    aff_grid_size = np.array((512, 512, 512))
-    aff_grid_origin = np.min(origin, axis=0)
-    aff_grid_spacing = (np.max(extent, axis=0) - aff_grid_origin) / aff_grid_size
-
-    aff_grid = core.StructuredGrid(
-        size=aff_grid_size.tolist()[::-1],
-        spacing=aff_grid_spacing.tolist()[::-1],
-        origin=aff_grid_origin.tolist()[::-1],
-        device=device,
-        channels=3
-    )
-
-    aff_grid.set_size(size=(512, 512, 512), inplace=True)
-    aff_grid.set_to_identity_lut_()
-
-    # Load the affine
-    aff = np.loadtxt(f'{orig_dir}blocks_to_exvivo_affine.txt')
-    aff = torch.tensor(aff, device=device, dtype=torch.float32)
-
-    # Apply the FORWARD affine to the deformation
-    # aff = aff.inverse()
-    a = aff[0:3, 0:3].float()
-    t = aff[-0:3, 3].float()
-
-    # Create a deformation from the affine that lives in the stacked blocks space
-
-    aff_grid.data = aff_grid.data.flip(0)
-
-    aff_grid.data = torch.matmul(a, aff_grid.data.permute(list(range(1, 3 + 1)) + [0]).unsqueeze(-1))
-    aff_grid.data = (aff_grid.data.squeeze() + t).permute([-1] + list(range(0, 3)))
-
-    aff_grid.data = aff_grid.data.flip(0)
-
-    # Load the defromabale transformation
-    phi = io.LoadITKFile(
-        f'{orig_dir}blocks_phi_to_exvivo.mhd', device=device
-    )
-    phi.set_size((256, 256, 256))
-
-    # Compose the grids
-    deformation = so.ComposeGrids.Create(device=device)([aff_grid, phi])
-
-    return deformation
-
-
-def stacked_blocks_to_block(block_path):
-
-    block = block_path.split('/')[-1]
-
-    # Need to determine the output grid
-    output_grid = io.LoadITKFile(f'{block_path}/volumes/raw/difference_volume.mhd', device=device)
-    aff_grid = core.StructuredGrid.FromGrid(output_grid, channels=3)
-    del output_grid
-    torch.cuda.empty_cache()
-    aff_grid.set_size((60, 1024, 1024), inplace=True)
-    aff_grid.set_to_identity_lut_()
-
-    # Load the affine
-    aff = np.loadtxt(f'{block_path}/surfaces/raw/{block}_rigid_tform.txt')
-    aff = torch.tensor(aff, device=device, dtype=torch.float32)
-
-    # Apply the FORWARD affine to the deformation
-    # aff = aff.inverse()
-    a = aff[0:3, 0:3].float()
-    t = aff[-0:3, 3].float()
-
-    # Create a deformation from the affine that lives in the stacked blocks space
-
-    aff_grid.data = aff_grid.data.flip(0)
-
-    aff_grid.data = torch.matmul(a, aff_grid.data.permute(list(range(1, 3 + 1)) + [0]).unsqueeze(-1))
-    aff_grid.data = (aff_grid.data.squeeze() + t).permute([-1] + list(range(0, 3)))
-
-    aff_grid.data = aff_grid.data.flip(0)
-
-    # Load the deformabale transformation
-    phi = io.LoadITKFile(
-        f'{block_path}/volumes/raw/{block}_phi_stacking.mhd', device=device
-    )
-    phi.set_size((60, 1024, 1024))
-
-    # Compose the grids
-    deformation = so.ComposeGrids.Create(device=device)([aff_grid, phi])
-
-    return deformation
-
-
-def block_stitch(block_path):
-    block = block_path.split('/')[-1]
-
-    # Load the deformabale transformation
-    phi = io.LoadITKFile(
-        f'{block_path}/volumes/raw/{block}_phi_stitch.mhd', device=device
-    )
-    phi.set_size((60, 1024, 1024))
-
-    return phi
-
-
-def get_deformation(block_path, rabbit):
-
-    day3_dir = f'/hdscratch/ucair/{rabbit}/mri/invivo/'
-    stacked_blocks_dir = f'/hdscratch/ucair/{rabbit}/blockface/recons/'
-    block = block_path.split('/')[-1]
-    exvivo_out = f'/hdscratch/ucair/18_047/mri/exvivo/volumes/deformable/{block}/'
-    invivo_out = f'/hdscratch/ucair/18_047/mri/invivo/volumes/deformable/{block}/'
-
-    deformations = []
-
-    # Get the transformation with the affine included from invivo to exvivo
-    invivo_to_exvivo = mr_to_exvivo(day3_dir)
-    deformations.append(invivo_to_exvivo)
-
-    # Get the transformation with the affine included from exvivo to the stacked blocks
-    exvivo_to_stacked = exvivo_to_blocks(stacked_blocks_dir)
-    deformations.append(exvivo_to_stacked)
-
-    # Load the transformation from the stacked blocks to the block of interest
-    stacked_to_block = stacked_blocks_to_block(block_path)
-    deformations.append(stacked_to_block)
-
-    invivo_to_block = so.ComposeGrids.Create(device=device)(deformations[::-1])
-
-    return invivo_to_block
 
 def load_fscv(file):
     with open(file, 'r') as f:
@@ -291,13 +103,22 @@ def deform_points(rabbit):
     old_dir = '/home/sci/blakez/ucair/18_047/rawVolumes/ExVivo_2018-07-26/'
     block_list = sorted(glob.glob(f'{bf_dir}block*'))
 
+    def_diff = []
+    # Deformable Landmarks
     for block_path in block_list:
+
         block = block_path.split('/')[-1]
+
         # Check to see if there are any landmarks for this block
         bf_landmark_file = sorted(glob.glob(f'{bf_dir}{block}/landmarks/*.fcsv'))
         if bf_landmark_file == []:
             print(f'No landmarks for {block}')
             continue
+
+        # if block in ['block07', 'block08', 'block09', 'block10']:
+        #     continue
+
+        print(f'Processing deformable {block} ... ', end='')
 
         # Load the landmarks
         bf_landmarks = load_fscv(bf_landmark_file[0]).to(device)
@@ -305,97 +126,195 @@ def deform_points(rabbit):
         mr_landmarks = load_fscv(mr_landmark_file[0])
 
         # Get the deformation from the block to the invivo
-        # rabbit = '18_047'
-        # rabbit_dir = f'/hdscratch/ucair/{rabbit}/blockface/'
+        from_mr_to_block = generate(rabbit, block=block, source_space='invivo', target_space='blockface')
 
-        # Get a list of the blocks
-        from_mr_to_block = get_deformation(block_path, rabbit)
+        def_landmarks = sample_points(from_mr_to_block, bf_landmarks)
 
-        hope = sample_points(from_mr_to_block, bf_landmarks)
+        diff = def_landmarks.cpu() - mr_landmarks.cpu()
+        def_diff.append(diff)
+        print('done')
 
-        diff = hope.cpu() - mr_landmarks.cpu()
-        print(diff)
-        print(torch.sqrt((diff ** 2).sum(-1)))
+    aff_diff = []
+    # Affine Landmarks
+    for block_path in block_list:
 
-        # # Load the affine that goes from stacked to exvivo
-        # aff_to_ex = np.loadtxt(f'{old_dir}blocks_to_exvivo_affine.txt')
-        # aff_to_ex = torch.tensor(aff_to_ex, device=device, dtype=torch.float32)
-        #
-        # phi_inv_ex = io.LoadITKFile(f'{old_dir}block_phi_inv.mhd', device=device)
-        # phi_inv_ex.data = phi_inv_ex.data.flip(0)
-        #
-        # aff_to_ex = aff_to_ex.inverse()
-        # a = aff_to_ex[0:3, 0:3].float()
-        # t = aff_to_ex[-0:3, 3].float()
-        #
-        # phi_inv_ex.data = torch.matmul(a.unsqueeze(0).unsqueeze(0),
-        #                                phi_inv_ex.data.permute(list(range(1, 3 + 1)) + [0]).unsqueeze(-1))
-        # phi_inv_ex.data = (phi_inv_ex.data.squeeze() + t).permute([-1] + list(range(0, 3)))
-        # phi_inv_ex.data = phi_inv_ex.data.flip(0)
-        #
-        # to_block_mr_ponts = sample_points(phi_inv_ex, mr_landmarks)
-        #
-        # # Load the affine
-        # aff = np.loadtxt(f'{bf_dir}{block}/surfaces/raw/{block}_rigid_tform.txt')
-        # aff = torch.tensor(aff, device=device, dtype=torch.float32)
-        #
-        # # Load phi_inv
-        # phi_inv = io.LoadITKFile(f'{bf_dir}{block}/volumes/raw/{block}_phi_inv.mhd', device=device)
-        # phi_inv.set_size((60, 1024, 1024))
-        # #
-        # # # Phi_inv is in z,y,x and need x,y,z
-        # phi_inv.data = phi_inv.data.flip(0)
-        #
-        # # Apply the inverse affine to the grid
-        # aff = aff.inverse()
-        # a = aff[0:3, 0:3].float()
-        # t = aff[-0:3, 3].float()
-        #
-        # phi_inv.data = torch.matmul(a.unsqueeze(0).unsqueeze(0),
-        #                             phi_inv.data.permute(list(range(1, 3 + 1)) + [0]).unsqueeze(-1))
-        # phi_inv.data = (phi_inv.data.squeeze() + t).permute([-1] + list(range(0, 3)))
-        #
-        # # Flip phi_inv back to the way it was
-        # phi_inv.data = phi_inv.data.flip(0)
+        block = block_path.split('/')[-1]
 
+        # Check to see if there are any landmarks for this block
+        bf_landmark_file = sorted(glob.glob(f'{bf_dir}{block}/landmarks/*.fcsv'))
+        if bf_landmark_file == []:
+            print(f'No landmarks for {block}')
+            continue
 
+        print(f'Processing affine {block} ... ', end='')
 
-def exvivo_to_invivo(rabbit):
+        # Load the landmarks
+        bf_landmarks = load_fscv(bf_landmark_file[0]).to(device)
+        mr_landmark_file = sorted(glob.glob(f'{mr_dir}{block}*.fcsv'))
+        mr_landmarks = load_fscv(mr_landmark_file[0])
 
-    data_dir = f'/hdscratch/ucair/{rabbit}/mri/invivo/'
+        block_to_mr_affine = generate_affine_only(rabbit, block=block, source_space='blockface', target_space='invivo')
 
-    # Load the landmarks in exvivo
-    ex_points_file = sorted(glob.glob(f'{data_dir}landmarks/*exvivo.fcsv'))
-    ex_points = load_fscv(ex_points_file[0])
+        aff_lm = []
+        for lm in bf_landmarks:
+            flip_lm = torch.cat([lm.flip(0).float().cpu(), torch.tensor([1.0])]).cpu().unsqueeze(-1)
+            tform_lm = torch.matmul(block_to_mr_affine.cpu(), flip_lm)
+            aff_lm.append(tform_lm[:-1].flip(0).permute(1, 0))
 
-    # Load the affine that goes from exvivo to invivo
-    aff = np.loadtxt(f'{data_dir}surfaces/raw/invivo_to_exvivo_affine.txt')
-    aff = torch.tensor(aff, device=device, dtype=torch.float32)
+        aff_lm = torch.cat(aff_lm, 0)
 
-    # Load the transformation
-    phi_inv = io.LoadITKFile(f'{data_dir}volumes/deformable/invivo_phi_inv.mhd', device=device)
+        diff = aff_lm.cpu() - mr_landmarks.cpu()
+        aff_diff.append(diff)
 
-    # # Phi_inv is in z,y,x and need x,y,z
-    phi_inv.data = phi_inv.data.flip(0)
+        print('done')
 
-    # Apply the inverse affine to the grid
-    aff = aff.inverse()
-    a = aff[0:3, 0:3].float()
-    t = aff[-0:3, 3].float()
+    ff_aff_diff = []
+    # Affine Landmarks
+    for block_path in block_list:
 
-    phi_inv.data = torch.matmul(a.unsqueeze(0).unsqueeze(0),
-                                phi_inv.data.permute(list(range(1, 3 + 1)) + [0]).unsqueeze(-1))
-    phi_inv.data = (phi_inv.data.squeeze() + t).permute([-1] + list(range(0, 3)))
+        block = block_path.split('/')[-1]
 
-    phi_inv.data = phi_inv.data.flip(0)
+        # Check to see if there are any landmarks for this block
+        bf_landmark_file = sorted(glob.glob(f'{bf_dir}{block}/landmarks/*.fcsv'))
+        if bf_landmark_file == []:
+            print(f'No landmarks for {block}')
+            continue
 
-    invivo_points = sample_points(phi_inv, ex_points)
+        print(f'Processing affine {block} ... ', end='')
 
-    # Write out the points
-    write_fcsv(invivo_points, f'{data_dir}landmarks/block08_landmarks_invivo.fcsv')
+        # Load the landmarks
+        bf_landmarks = load_fscv(bf_landmark_file[0]).to(device)
+        mr_landmark_file = sorted(glob.glob(f'{mr_dir}{block}*.fcsv'))
+        mr_landmarks = load_fscv(mr_landmark_file[0])
 
+        # Load the front face affine for stacking the blocks
+        ff_stack_aff = np.loadtxt(f'{block_path}/surfaces/raw/{block}_front_face_tform.txt')
+        ff_stack_aff = torch.tensor(ff_stack_aff, device=device, dtype=torch.float32)
+
+        ff_exvivo_aff = np.loadtxt(f'{block_path}/../recons/blocks_to_exvivo_affine_front_face.txt')
+        ff_exvivo_aff = torch.tensor(ff_exvivo_aff, device=device, dtype=torch.float32)
+
+        block_to_mr_affine = generate_affine_only(rabbit, block=block, source_space='exvivo', target_space='invivo')
+        block_to_mr_affine = block_to_mr_affine.float()
+
+        final_aff = ff_stack_aff.clone().cpu()
+        final_aff = torch.matmul(ff_exvivo_aff.cpu(), final_aff)
+        final_aff = torch.matmul(block_to_mr_affine.cpu(), final_aff)
+
+        aff_lm = []
+        for lm in bf_landmarks:
+            flip_lm = torch.cat([lm.flip(0).float().cpu(), torch.tensor([1.0])]).cpu().unsqueeze(-1)
+            tform_lm = torch.matmul(final_aff.cpu(), flip_lm)
+            aff_lm.append(tform_lm[:-1].flip(0).permute(1, 0))
+
+        aff_lm = torch.cat(aff_lm, 0)
+
+        diff = aff_lm.cpu() - mr_landmarks.cpu()
+        ff_aff_diff.append(diff)
+
+        print('done')
+
+    ff_def_diff = []
+    # Affine Landmarks
+    for block_path in block_list:
+
+        block = block_path.split('/')[-1]
+
+        # Check to see if there are any landmarks for this block
+        bf_landmark_file = sorted(glob.glob(f'{bf_dir}{block}/landmarks/*.fcsv'))
+        if bf_landmark_file == []:
+            print(f'No landmarks for {block}')
+            continue
+
+        print(f'Processing affine {block} ... ', end='')
+
+        # Load the landmarks
+        bf_landmarks = load_fscv(bf_landmark_file[0]).to(device)
+        mr_landmark_file = sorted(glob.glob(f'{mr_dir}{block}*.fcsv'))
+        mr_landmarks = load_fscv(mr_landmark_file[0])
+
+        # Load the front face affine for stacking the blocks
+        ff_stack_aff = np.loadtxt(f'{block_path}/surfaces/raw/{block}_front_face_tform.txt')
+        ff_stack_aff = torch.tensor(ff_stack_aff, device=device, dtype=torch.float32)
+
+        ff_exvivo_aff = np.loadtxt(f'{block_path}/../recons/blocks_to_exvivo_affine_front_face.txt')
+        ff_exvivo_aff = torch.tensor(ff_exvivo_aff, device=device, dtype=torch.float32)
+
+        final_aff = ff_stack_aff.clone().cpu()
+        final_aff = torch.matmul(ff_exvivo_aff.cpu(), final_aff)
+
+        aff_lm = []
+        for lm in bf_landmarks:
+            flip_lm = torch.cat([lm.flip(0).float().cpu(), torch.tensor([1.0])]).cpu().unsqueeze(-1)
+            tform_lm = torch.matmul(final_aff.cpu(), flip_lm)
+            aff_lm.append(tform_lm[:-1].flip(0).permute(1, 0))
+
+        aff_lm = torch.cat(aff_lm, 0)
+
+        ex_in_aff = np.loadtxt('/hdscratch/ucair/18_047/mri/exvivo/surfaces/raw/exvivo_to_invivo_affine.txt')
+        ex_in_aff = torch.tensor(ex_in_aff, device=device, dtype=torch.float32)
+
+        # Apply the FORWARD affine to the deformation
+        a = ex_in_aff[0:3, 0:3].float()
+        t = ex_in_aff[-0:3, 3].float()
+
+        # Create a deformation from the affine that lives in the stacked blocks space
+        aff_grid = io.LoadITKFile('/hdscratch/ucair/18_047/mri/exvivo/volumes/raw/reference_volume.nii.gz',
+                                  device=device)
+        aff_grid.set_to_identity_lut_()
+        aff_grid.data = aff_grid.data.flip(0)
+        aff_grid.data = torch.matmul(a, aff_grid.data.permute(list(range(1, 3 + 1)) + [0]).unsqueeze(-1))
+        aff_grid.data = (aff_grid.data.squeeze() + t).permute([-1] + list(range(0, 3)))
+        aff_grid.data = aff_grid.data.flip(0)
+
+        exvivo_to_invivo = io.LoadITKFile('/hdscratch/ucair/18_047/mri/exvivo/volumes/raw/exvivo_to_invivo_phi.mhd',
+                                          device=device)
+        # Compose the grids
+        deformation = so.ComposeGrids.Create(device=device)([aff_grid, exvivo_to_invivo])
+
+        def_aff_lm = sample_points(deformation, aff_lm)
+
+        diff = def_aff_lm.cpu() - mr_landmarks.cpu()
+        ff_def_diff.append(diff)
+
+        print('done')
+
+    aff_dist = torch.sqrt((torch.cat(aff_diff, 0) ** 2).sum(-1))
+    aff_mean = aff_dist.mean()
+    aff_std = aff_dist.std()
+
+    def_dist = torch.sqrt((torch.cat(def_diff, 0) ** 2).sum(-1))
+    def_mean = def_dist.mean()
+    def_std = def_dist.std()
+
+    ff_aff_dist = torch.sqrt((torch.cat(ff_aff_diff, 0) ** 2).sum(-1))
+    ff_aff_mean = ff_aff_dist.mean()
+    ff_aff_std = ff_aff_dist.std()
+
+    ff_def_dist = torch.sqrt((torch.cat(ff_def_diff, 0) ** 2).sum(-1))
+    ff_def_mean = ff_def_dist.mean()
+    ff_def_std = ff_def_dist.std()
+
+    indices = [1] * len(aff_dist) + [2] * len(aff_dist) + [3] * len(aff_dist) + [4] * len(aff_dist)
+    cat_dists = torch.cat((def_dist, aff_dist, ff_def_dist, ff_aff_dist), dim=0)
+
+    pd_dict = {
+        'Def_ID': indices,
+        'Dep_Var': cat_dists.numpy()
+    }
+
+    df = pd.DataFrame(pd_dict)
+    df['lm_num'] = [f'lm{x:02d}' for x in range(1, len(def_dist) + 1)] * 4
+    results = AnovaRM(df, depvar='Dep_Var', subject='lm_num', within=['Def_ID'])
+    print(results.fit())
+
+    # stacked_dists = torch.stack((def_dist, aff_dist, ff_def_dist, ff_aff_dist), dim=-1)
+    # df = pd.DataFrame(data=stacked_dists.numpy(), index=range(0, 10), columns=['def', 'aff', 'ff_def', 'ff_aff'])
+    # df['id'] = [f'lm{x:02d}' for x in range(1, len(def_dist) + 1)]
+    # df = pd.DataFrame(data=cat_dists.numpy(), index=range(0, 40), columns=['depvar'])
+    # df['id'] = indices
+    # df['cond'] = ['noise'] * 40
 
 if __name__ == '__main__':
     rabbit = '18_047'
     deform_points(rabbit)
-    # exvivo_to_invivo(rabbit)

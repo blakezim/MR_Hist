@@ -22,3 +22,13 @@
 .idea/**/libraries
 
 *.py[cod]
+
+#Folders
+VNet/output/
+VNet/output/*
+VNet/runs/
+VNet/runs/*
+VNet/goodRuns/
+VNet/goodRuns/*
+VNet/slurm/
+VNet/slurm/*

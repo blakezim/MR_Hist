@@ -1,0 +1,138 @@
+python is /home/sci/blakez/software/anaconda3/envs/MR_Hist/bin/python
+Running with GPU Index 2,3
+Namespace(cuda=False, data_dir='/usr/sci/scratch/blakez/microscopic_data/', im_size=256, inferBatchSize=64, lr=0.0001, nEpochs=1000, out_dir='/usr/sci/scratch/blakez/microscopic_data/Output/', repeat_factor=40, seed=358, threads=4, trainBatchSize=100)
+===> Generating Datasets ...  done
+===> Beginning Training
+===> Learning Rate = 0.0001
+=> Done with 1 / 34  Batch Loss: 1.759429
+=> Done with 2 / 34  Batch Loss: 1.689243
+=> Done with 3 / 34  Batch Loss: 1.679370
+=> Done with 4 / 34  Batch Loss: 1.683278
+=> Done with 5 / 34  Batch Loss: 1.654710
+=> Done with 6 / 34  Batch Loss: 1.631871
+=> Done with 7 / 34  Batch Loss: 1.623989
+=> Done with 8 / 34  Batch Loss: 1.625978
+=> Done with 9 / 34  Batch Loss: 1.581495
+=> Done with 10 / 34  Batch Loss: 1.558685
+=> Done with 11 / 34  Batch Loss: 1.574007
+=> Done with 12 / 34  Batch Loss: 1.537152
+=> Done with 13 / 34  Batch Loss: 1.529308
+=> Done with 14 / 34  Batch Loss: 1.561829
+=> Done with 15 / 34  Batch Loss: 1.495367
+=> Done with 16 / 34  Batch Loss: 1.506438
+=> Done with 17 / 34  Batch Loss: 1.497376
+=> Done with 18 / 34  Batch Loss: 1.475948
+=> Done with 19 / 34  Batch Loss: 1.519385
+=> Done with 20 / 34  Batch Loss: 1.453804
+=> Done with 21 / 34  Batch Loss: 1.469360
+=> Done with 22 / 34  Batch Loss: 1.425406
+=> Done with 23 / 34  Batch Loss: 1.431971
+=> Done with 24 / 34  Batch Loss: 1.404647
+=> Done with 25 / 34  Batch Loss: 1.414578
+=> Done with 26 / 34  Batch Loss: 1.425382
+=> Done with 27 / 34  Batch Loss: 1.465783
+=> Done with 28 / 34  Batch Loss: 1.393094
+=> Done with 29 / 34  Batch Loss: 1.358832
+=> Done with 30 / 34  Batch Loss: 1.377668
+=> Done with 31 / 34  Batch Loss: 1.343133
+=> Done with 32 / 34  Batch Loss: 1.323518
+=> Done with 33 / 34  Batch Loss: 1.328664
+=> Done with 34 / 34  Batch Loss: 1.366732
+===> Epoch 1 Complete: Avg. Loss: 1.504924
+===> Evaluating Model
+=> Done with 1 / 4  Batch Loss: 1.223659
+=> Done with 2 / 4  Batch Loss: 1.214079
+=> Done with 3 / 4  Batch Loss: 1.228178
+=> Done with 4 / 4  Batch Loss: 1.221299
+===> Avg. MSE Loss: 0.143742
+===> Learning Rate = 0.0001
+=> Done with 1 / 34  Batch Loss: 1.301097
+=> Done with 2 / 34  Batch Loss: 1.317480
+=> Done with 3 / 34  Batch Loss: 1.368031
+=> Done with 4 / 34  Batch Loss: 1.300254
+=> Done with 5 / 34  Batch Loss: 1.330074
+=> Done with 6 / 34  Batch Loss: 1.294227
+=> Done with 7 / 34  Batch Loss: 1.330891
+=> Done with 8 / 34  Batch Loss: 1.310614
+=> Done with 9 / 34  Batch Loss: 1.282204
+=> Done with 10 / 34  Batch Loss: 1.285681
+=> Done with 11 / 34  Batch Loss: 1.314700
+=> Done with 12 / 34  Batch Loss: 1.285633
+=> Done with 13 / 34  Batch Loss: 1.240948
+=> Done with 14 / 34  Batch Loss: 1.241630
+=> Done with 15 / 34  Batch Loss: 1.286398
+=> Done with 16 / 34  Batch Loss: 1.263540
+=> Done with 17 / 34  Batch Loss: 1.238326
+=> Done with 18 / 34  Batch Loss: 1.208077
+=> Done with 19 / 34  Batch Loss: 1.243760
+=> Done with 20 / 34  Batch Loss: 1.227894
+=> Done with 21 / 34  Batch Loss: 1.239857
+=> Done with 22 / 34  Batch Loss: 1.268233
+=> Done with 23 / 34  Batch Loss: 1.276475
+=> Done with 24 / 34  Batch Loss: 1.254652
+=> Done with 25 / 34  Batch Loss: 1.275298
+=> Done with 26 / 34  Batch Loss: 1.234473
+=> Done with 27 / 34  Batch Loss: 1.250654
+=> Done with 28 / 34  Batch Loss: 1.239545
+=> Done with 29 / 34  Batch Loss: 1.184741
+=> Done with 30 / 34  Batch Loss: 1.196143
+=> Done with 31 / 34  Batch Loss: 1.202212
+=> Done with 32 / 34  Batch Loss: 1.227588
+=> Done with 33 / 34  Batch Loss: 1.210445
+=> Done with 34 / 34  Batch Loss: 1.205698
+===> Epoch 2 Complete: Avg. Loss: 1.262867
+===> Evaluating Model
+=> Done with 1 / 4  Batch Loss: 1.103132
+=> Done with 2 / 4  Batch Loss: 1.104035
+=> Done with 3 / 4  Batch Loss: 1.100678
+=> Done with 4 / 4  Batch Loss: 1.123354
+===> Avg. MSE Loss: 0.130329
+===> Learning Rate = 0.0001
+=> Done with 1 / 34  Batch Loss: 1.193064
+=> Done with 2 / 34  Batch Loss: 1.155655
+=> Done with 3 / 34  Batch Loss: 1.176076
+=> Done with 4 / 34  Batch Loss: 1.202713
+=> Done with 5 / 34  Batch Loss: 1.203067
+=> Done with 6 / 34  Batch Loss: 1.204655
+=> Done with 7 / 34  Batch Loss: 1.192455
+=> Done with 8 / 34  Batch Loss: 1.192187
+=> Done with 9 / 34  Batch Loss: 1.173368
+=> Done with 10 / 34  Batch Loss: 1.190913
+=> Done with 11 / 34  Batch Loss: 1.212243
+=> Done with 12 / 34  Batch Loss: 1.190889
+=> Done with 13 / 34  Batch Loss: 1.167691
+=> Done with 14 / 34  Batch Loss: 1.140497
+=> Done with 15 / 34  Batch Loss: 1.170452
+=> Done with 16 / 34  Batch Loss: 1.149738
+=> Done with 17 / 34  Batch Loss: 1.163146
+=> Done with 18 / 34  Batch Loss: 1.196596
+=> Done with 19 / 34  Batch Loss: 1.162415
+=> Done with 20 / 34  Batch Loss: 1.140588
+=> Done with 21 / 34  Batch Loss: 1.146956
+=> Done with 22 / 34  Batch Loss: 1.114646
+=> Done with 23 / 34  Batch Loss: 1.154626
+=> Done with 24 / 34  Batch Loss: 1.136923
+=> Done with 25 / 34  Batch Loss: 1.172135
+=> Done with 26 / 34  Batch Loss: 1.131138
+=> Done with 27 / 34  Batch Loss: 1.125403
+=> Done with 28 / 34  Batch Loss: 1.121984
+=> Done with 29 / 34  Batch Loss: 1.131168
+=> Done with 30 / 34  Batch Loss: 1.140113
+=> Done with 31 / 34  Batch Loss: 1.129803
+=> Done with 32 / 34  Batch Loss: 1.125966
+=> Done with 33 / 34  Batch Loss: 1.138925
+=> Done with 34 / 34  Batch Loss: 1.129334
+===> Epoch 3 Complete: Avg. Loss: 1.161104
+===> Evaluating Model
+=> Done with 1 / 4  Batch Loss: 1.131387
+=> Done with 2 / 4  Batch Loss: 1.122411
+=> Done with 3 / 4  Batch Loss: 1.105799
+=> Done with 4 / 4  Batch Loss: 1.113595
+===> Avg. MSE Loss: 0.131564
+===> Learning Rate = 0.0001
+=> Done with 1 / 34  Batch Loss: 1.120168
+=> Done with 2 / 34  Batch Loss: 1.127314
+=> Done with 3 / 34  Batch Loss: 1.146865
+=> Done with 4 / 34  Batch Loss: 1.136964
+=> Done with 5 / 34  Batch Loss: 1.121743
+slurmstepd: error: *** JOB 33306 ON rigveda CANCELLED AT 2020-06-21T16:16:37 ***
