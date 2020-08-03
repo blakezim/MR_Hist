@@ -53,7 +53,7 @@ parser.add_argument('-d', '--data_dir', type=str, default='/usr/sci/scratch/blak
                     help='Path to data directory')
 parser.add_argument('-o', '--out_dir', type=str, default='/usr/sci/scratch/blakez/microscopic_data/Output/',
                     help='Path to output')
-parser.add_argument('--trainBatchSize', type=int, default=128, help='training batch size')
+parser.add_argument('--trainBatchSize', type=int, default=64, help='training batch size')
 parser.add_argument('--inferBatchSize', type=int, default=64, help='cross validation batch size')
 parser.add_argument('--nEpochs', type=int, default=1000, help='number of epochs to train for')
 parser.add_argument('--lr', type=float, default=0.0001, help='Learning Rate')
@@ -163,8 +163,8 @@ def add_figure(tensor, writer, title=None, text=None, label=None, epoch=0, min_m
 
 def get_loaders(opt):
 
-    inputs = torch.load(f'{opt.dataDirectory}histology_inputs.pth')
-    labels = torch.load(f'{opt.dataDirectory}histology_labels.pth')
+    inputs = torch.load(f'{opt.dataDirectory}histology_inputs_two_label.pth')
+    labels = torch.load(f'{opt.dataDirectory}histology_labels_two_label.pth')
 
     samp_split = int(np.floor(len(inputs) * 0.9))
 
@@ -221,7 +221,7 @@ def learn(opt):
                 with torch.no_grad():
                     im = len(inputs) // 2
 
-                    input1 = inputs[im].squeeze()
+                    input1 = inputs[im, 0:3].squeeze()
                     add_figure(input1.permute(1, 2, 0), writer, title='Input 1', label='Train/Hist', epoch=epoch,
                                text=None)
 
@@ -269,7 +269,7 @@ def learn(opt):
                     pred_im = pred[im].squeeze()
                     pred_im = torch.max(softmax(pred_im), dim=0)[1]
                     label_im = label[im].squeeze()
-                    input1 = inputs[im].squeeze()
+                    input1 = inputs[im, 0:3].squeeze()
 
                     # Add the input images - they are not going to change
                     add_figure(input1.permute(1, 2, 0), writer, title='Input 1', label='Infer/Hist', epoch=epoch,
@@ -311,7 +311,7 @@ def learn(opt):
     training_data_loader, testing_data_loader = get_loaders(opt)
     print(' done')
 
-    model = UNet(3, 4)
+    model = UNet(6, 3)
     model = model.to(device)
     model = nn.DataParallel(model)
 

@@ -55,7 +55,10 @@ def complile_training_data(rabbits):
 
                 label = np.zeros(segs[0].shape)
                 for i, seg in enumerate(segs, 1):
-                    label[seg.bool()] = i
+                    if i == 3:
+                        label[seg.bool()] = 1
+                    else:
+                        label[seg.bool()] = i
 
                 colors = []
                 colors += [preprocess_itk_image(f'{sec}/img_{img_num}_red.nii.gz')]
@@ -68,8 +71,8 @@ def complile_training_data(rabbits):
                 labels.append(torch.tensor(label, dtype=torch.int8))
             print('done')
 
-    torch.save(inputs, f'{sd_root}histology_inputs.pth')
-    torch.save(labels, f'{sd_root}histology_labels.pth')
+    torch.save(inputs, f'{sd_root}histology_inputs_two_label.pth')
+    torch.save(labels, f'{sd_root}histology_labels_two_label.pth')
 
     print('Done')
 

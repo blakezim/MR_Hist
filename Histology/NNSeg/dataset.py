@@ -3,6 +3,7 @@ import torch.utils.data as data
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
 
+from skimage import color
 from PIL.Image import BILINEAR
 
 
@@ -70,12 +71,20 @@ class TrainDataset(data.Dataset):
             pad = (size_diff[2] // 2, size_diff[2] // 2 + size_diff[2] % 2,
                    size_diff[1] // 2, size_diff[1] // 2 + size_diff[1] % 2)
             input1 = F.pad(input1, pad)
+            label1 = F.pad(label1, pad)
 
         temp = torch.zeros((self.size, self.size))
 
         while temp.sum() == 0.0:
-            x = torch.randint(0, (input1.shape[2] - self.size), (1,)).item()
-            y = torch.randint(0, (input1.shape[1] - self.size), (1,)).item()
+            if input1.shape[2] == self.size:
+                x = 0
+            else:
+                x = torch.randint(0, (input1.shape[2] - self.size), (1,)).item()
+
+            if input1.shape[1] == self.size:
+                y = 0
+            else:
+                y = torch.randint(0, (input1.shape[1] - self.size), (1,)).item()
             temp = label1[y: y + self.size, x: x + self.size]
 
         input1 = input1[:, y: y + self.size, x: x + self.size]
@@ -85,7 +94,11 @@ class TrainDataset(data.Dataset):
         input1, mask = self.spatial_transform(input1, label1.long())
         # mask = torch.round(mask)
 
-        return input1.float(), mask.long()
+        input_hsv = torch.from_numpy(color.rgb2hsv(input1.permute(1, 2, 0).numpy())).permute(2, 0, 1)
+
+        inputs = torch.cat([input1, input_hsv], dim=0)
+
+        return inputs.float(), mask.long()
 
     def __len__(self):
         return self.length
@@ -105,7 +118,7 @@ class EvalDataset(data.Dataset):
         input1 = self.inputs[item]
         label1 = self.labels[item]
 
-        if any([x > self.size for x in list(input1.shape[1:3])]):
+        if any([x < self.size for x in list(input1.shape[1:3])]):
             size_diff = torch.tensor([input1.shape[0], self.size, self.size]) - torch.tensor(input1.shape)
             size_diff[size_diff < 0.0] = 0.0
             pad = (size_diff[2] // 2, size_diff[2] // 2 + size_diff[2] % 2,
@@ -122,7 +135,11 @@ class EvalDataset(data.Dataset):
         input1 = input1[:, y: y + self.size, x: x + self.size]
         label1 = label1[y: y + self.size, x: x + self.size]
 
-        return input1.float(), label1.long()
+        input_hsv = torch.from_numpy(color.rgb2hsv(input1.permute(1, 2, 0).numpy())).permute(2, 0, 1)
+
+        inputs = torch.cat([input1, input_hsv], dim=0)
+
+        return inputs.float(), label1.long()
 
     def __len__(self):
         return self.length()

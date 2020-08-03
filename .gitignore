@@ -32,3 +32,5 @@ VNet/goodRuns/
 VNet/goodRuns/*
 VNet/slurm/
 VNet/slurm/*
+Histology/NNSeg/slurm
+Histology/NNSeg/slurm/*
