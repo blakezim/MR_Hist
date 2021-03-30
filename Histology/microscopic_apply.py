@@ -14,11 +14,11 @@ import skimage.segmentation as seg
 from collections import OrderedDict
 import torch.optim as optim
 
-import CAMP.Core as core
-import CAMP.FileIO as io
-import CAMP.StructuredGridTools as st
-import CAMP.UnstructuredGridOperators as uo
-import CAMP.StructuredGridOperators as so
+import CAMP.camp.Core as core
+import CAMP.camp.FileIO as io
+import CAMP.camp.StructuredGridTools as st
+import CAMP.camp.UnstructuredGridOperators as uo
+import CAMP.camp.StructuredGridOperators as so
 
 import matplotlib
 matplotlib.use('qt5agg')

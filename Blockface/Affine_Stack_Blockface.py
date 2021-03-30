@@ -18,11 +18,11 @@ from skimage import measure
 from collections import OrderedDict
 import torch.optim as optim
 
-import CAMP.Core as core
-import CAMP.FileIO as io
-import CAMP.StructuredGridTools as st
-import CAMP.UnstructuredGridOperators as uo
-import CAMP.StructuredGridOperators as so
+import CAMP.camp.Core as core
+import CAMP.camp.FileIO as io
+import CAMP.camp.StructuredGridTools as st
+import CAMP.camp.UnstructuredGridOperators as uo
+import CAMP.camp.StructuredGridOperators as so
 
 import matplotlib
 matplotlib.use('qt5agg')
@@ -107,13 +107,13 @@ def solve_affines(block_list):
         ImScatter = io.LoadITKFile(scatter_list[0], device=device)
         ImScatter.set_spacing_(spacing)
         ImScatter.set_origin_(-1 * (ImScatter.size * ImScatter.spacing) / 2)
-        ImScatter /= 255.0
+        ImScatter /= ImScatter.max()
 
         # Load the surface image
         ImSurface = io.LoadITKFile(surface_list[0], device=device)
         ImSurface.set_spacing_(spacing)
         ImSurface.set_origin_(-1 * (ImSurface.size * ImSurface.spacing) / 2)
-        ImSurface /= 255.0
+        ImSurface /= ImSurface.max()
 
         # Save out the first image
         difference = ImScatter - ImSurface
@@ -151,12 +151,12 @@ def solve_affines(block_list):
             ImScatter = io.LoadITKFile(scat, device=device)
             ImScatter.set_spacing_(ImPrev.spacing)
             ImScatter.set_origin_(ImPrev.origin)
-            ImScatter /= 255.0
+            ImScatter /= ImScatter.max()
 
             ImSurface = io.LoadITKFile(surf, device=device)
             ImSurface.set_spacing_(ImPrev.spacing)
             ImSurface.set_origin_(ImPrev.origin)
-            ImSurface /= 255.0
+            ImSurface /= ImSurface.max()
 
             difference = ImScatter - ImSurface
 
@@ -305,11 +305,10 @@ def filter_images(block_list):
 
 
 if __name__ == '__main__':
-    rabbit = '18_062'
+    rabbit = '18_061'
     rabbit_dir = f'/hdscratch/ucair/{rabbit}/blockface/'
 
-
     # Get a list of the blocks
-    block_list = sorted(glob.glob(f'{rabbit_dir}block*'))[1:]
-    # filter_images(block_list)
+    block_list = sorted(glob.glob(f'{rabbit_dir}block*'))
+    filter_images(block_list)
     solve_affines(block_list)

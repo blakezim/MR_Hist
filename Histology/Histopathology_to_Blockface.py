@@ -11,15 +11,16 @@ import numpy as np
 import subprocess as sp
 import skimage.segmentation as seg
 from skimage import measure
+import scipy.ndimage.measurements as snm
 
 from collections import OrderedDict
 import torch.optim as optim
 
-import CAMP.Core as core
-import CAMP.FileIO as io
-import CAMP.StructuredGridTools as st
-import CAMP.UnstructuredGridOperators as uo
-import CAMP.StructuredGridOperators as so
+import CAMP.camp.Core as core
+import CAMP.camp.FileIO as io
+import CAMP.camp.StructuredGridTools as st
+import CAMP.camp.UnstructuredGridOperators as uo
+import CAMP.camp.StructuredGridOperators as so
 
 import matplotlib
 matplotlib.use('qt5agg')
@@ -40,22 +41,44 @@ def solve_affine(histology, blockface, img_num, out_dir, device='cpu'):
         return aff_histopathology, opt_affine
 
     except IOError:
+        #
+        # points = torch.tensor(
+        #     tools.LandmarkPicker([histology[0].squeeze().cpu(), blockface[0].squeeze().cpu()]),
+        #     dtype=torch.float32,
+        #     device=device
+        # ).permute(1, 0, 2)
+        #
+        # # Change to real coordinates
+        # points *= torch.cat([histology.spacing[None, None, :], blockface.spacing[None, None, :]], 0)
+        # points += torch.cat([histology.origin[None, None, :], blockface.origin[None, None, :]], 0)
+        #
+        # aff_filter = so.AffineTransform.Create(points[1], points[0], device=device)
 
-        points = torch.tensor(
-            tools.LandmarkPicker([histology[0].squeeze().cpu(), blockface[0].squeeze().cpu()]),
-            dtype=torch.float32,
-            device=device
-        ).permute(1, 0, 2)
+        flip_aff = torch.tensor([[-1.0, 0.0], [0.0, -1.0]])
+        scaling = torch.sqrt(
+            (blockface.sum() * torch.prod(blockface.spacing)) / (histology.sum() * torch.prod(histology.spacing)))
 
-        # Change to real coordinates
-        points *= torch.cat([histology.spacing[None, None, :], blockface.spacing[None, None, :]], 0)
-        points += torch.cat([histology.origin[None, None, :], blockface.origin[None, None, :]], 0)
+        test_affine = scaling * flip_aff
 
-        aff_filter = so.AffineTransform.Create(points[1], points[0], device=device)
+        hist_com = torch.tensor(snm.center_of_mass(histology[0].squeeze().cpu().numpy()))
+        block_com = torch.tensor(snm.center_of_mass(blockface[0].squeeze().cpu().numpy()))
+
+        hist_com = (hist_com * histology.spacing.cpu()) + histology.origin.cpu()
+        block_com = (block_com * blockface.spacing.cpu()) + blockface.origin.cpu()
+
+        hist_com = torch.mm(test_affine, hist_com.unsqueeze(1)).squeeze()
+
+        translation = block_com - hist_com
 
         affine = torch.eye(3, device=device, dtype=torch.float32)
-        affine[0:2, 0:2] = aff_filter.affine
-        affine[0:2, 2] = aff_filter.translation
+        affine[0:2, 0:2] = test_affine
+        affine[0:2, 2] = translation
+
+        aff_filter = so.AffineTransform.Create(affine=affine, device=device)
+
+        # affine = torch.eye(3, device=device, dtype=torch.float32)
+        # affine[0:2, 0:2] = aff_filter.affine
+        # affine[0:2, 2] = aff_filter.translation
 
     aff_mic_seg = aff_filter(histology, blockface)
 
@@ -65,8 +88,8 @@ def solve_affine(histology, blockface, img_num, out_dir, device='cpu'):
 
     # Create the optimizer
     optimizer = optim.SGD([
-        {'params': model.affine, 'lr': 1.0e-11},
-        {'params': model.translation, 'lr': 1.0e-12}], momentum=0.9, nesterov=True
+        {'params': model.affine, 'lr': 4.0e-11},
+        {'params': model.translation, 'lr': 1.0e-12}], momentum=0.2, nesterov=True
     )
 
     energy = []
@@ -81,6 +104,11 @@ def solve_affine(histology, blockface, img_num, out_dir, device='cpu'):
 
         loss.backward()  # Compute the gradients
         optimizer.step()  #
+
+        if epoch % 2 == 0:
+            with torch.no_grad():
+                U, s, V = model.affine.clone().svd()
+                model.affine.data = torch.mm(U, V.transpose(1, 0))
 
         # if epoch >= 2:
         if epoch > 10 and np.mean(energy[-10:]) - energy[-1] < 0.01:
@@ -113,8 +141,8 @@ def deformable_histology_to_blockface(histology, blockface, scales, steps, gauss
         # Need do some blurring for the mic
         gauss = so.Gaussian.Create(
             channels=1,
-            kernel_size=25,
-            sigma=10,
+            kernel_size=50,
+            sigma=20,
             device=device
         )
         #
@@ -160,18 +188,6 @@ def deformable_histology_to_blockface(histology, blockface, scales, steps, gauss
             energy.append(match.step())
             print(f'Iteration: {i}   Energy: {energy[-1]}')
 
-            # temp_def = match.get_field().clone()
-            # temp_def.set_size(mic.size, inplace=True)
-            # def_mic = so.ApplyGrid.Create(temp_def, device=device)(mic, temp_def)
-            #
-            # plt.figure()
-            # plt.imshow(def_mic.data.permute(1, 2, 0).cpu())
-            # plt.axis('off')
-            # plt.gca().invert_yaxis()
-            # plt.savefig(f'/home/sci/blakez/ucair/Animations/Scrolls/MicReg/Images/{i:03d}_image.png', dpi=500, bbox_inches='tight', pad_inches=0)
-            # plt.close('all')
-            # del temp_def, def_mic
-
             if i > 10 and np.mean(energy[-10:]) - energy[-1] < 0.001:
                 break
 
@@ -194,8 +210,8 @@ def register_histopathology_to_blockface(rabbit, block, img_num, bf_slice):
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
 
-    if os.path.exists(f'{out_dir}/img_{img_num}_deformation_to_blockface.mhd'):
-        return
+    # if os.path.exists(f'{out_dir}/img_{img_num}_deformation_to_blockface.mhd'):
+    #     return
 
     # Load and make the histopathology segmentation
     segs = []
@@ -218,6 +234,18 @@ def register_histopathology_to_blockface(rabbit, block, img_num, bf_slice):
     except:
         blockface_seg = io.LoadITKFile(f'{blockface_dir}volumes/raw/segmentation_volume.nrrd',
                                        device=device)
+
+    # # Load the surface slice and get the difference
+    # blockface_surf = io.LoadITKFile(f'{blockface_dir}volumes/raw/surface/IMG_{bf_slice:03d}_surface.mhd',
+    #                                device=device)
+    #
+    # blockface_surf_p1 = io.LoadITKFile(f'{blockface_dir}volumes/raw/surface/IMG_{bf_slice + 1:03d}_surface.mhd',
+    #                                    device=device)
+    #
+    # diff = (blockface_surf - blockface_surf_p1).data[2]
+    #
+    # diff = (diff - diff.min()) / (diff.max() - diff.min())
+
     # Extract the slice
     blockface_seg = blockface_seg.extract_slice(bf_slice - 1, dim=0)
 
@@ -237,6 +265,7 @@ def register_histopathology_to_blockface(rabbit, block, img_num, bf_slice):
         mic.shape[1:],
         tensor=torch.tensor(mic, dtype=torch.float32, device=device),
         spacing=torch.tensor([10.0, 10.0], dtype=torch.float32, device=device),
+        origin=histology_seg.origin,
         device=device,
         dtype=torch.float32,
         channels=3
@@ -253,7 +282,7 @@ def register_histopathology_to_blockface(rabbit, block, img_num, bf_slice):
     def_histology, deformation = deformable_histology_to_blockface(
         aff_seg,
         blockface_seg,
-        steps=[0.005, 0.001],
+        steps=[0.01, 0.005],
         scales=[4, 1],
         gauss=True, 
         mic=aff_mic
@@ -264,15 +293,17 @@ def register_histopathology_to_blockface(rabbit, block, img_num, bf_slice):
 
 
 if __name__ == '__main__':
-    rabbit = '18_062'
-    block = 'block05'
-    raw_images = sorted(glob.glob(f'/hdscratch/ucair/{rabbit}/microscopic/{block}/raw/*_image.tif'))
-    if raw_images == []:
-        raw_images = mic_list = sorted(glob.glob(f'/hdscratch/ucair/{rabbit}/microscopic/{block}/raw/*_image.jpg'))
-    cur_nums = [int(x.split('/')[-1].split('_')[1]) for x in raw_images]
+    rabbit = '18_060'
+    block_list = sorted(glob.glob(f'/hdscratch/ucair/{rabbit}/microscopic/block*'))
+    for block_path in block_list[5:7]:
+        block = block_path.split('/')[-1]
+        raw_images = glob.glob(f'/hdscratch/ucair/{rabbit}/microscopic/{block}/raw/*_image.tif')
+        raw_images = sorted(glob.glob(f'/hdscratch/ucair/{rabbit}/microscopic/{block}/raw/*_image.jpg') + raw_images)
 
-    for im in cur_nums:
-        img = f'{im:03d}'
-        blockface_slice = im
-        register_histopathology_to_blockface(rabbit, block, img, blockface_slice)
-    # apply_deformation_to_histology(rabbit, block, img)
+        cur_nums = [int(x.split('/')[-1].split('_')[1]) for x in raw_images]
+
+        for im in cur_nums:
+            img = f'{im:03d}'
+            blockface_slice = im
+            register_histopathology_to_blockface(rabbit, block, img, blockface_slice)
+        # apply_deformation_to_histology(rabbit, block, img)

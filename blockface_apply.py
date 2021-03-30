@@ -14,11 +14,11 @@ import skimage.segmentation as seg
 from collections import OrderedDict
 import torch.optim as optim
 
-import CAMP.Core as core
-import CAMP.FileIO as io
-import CAMP.StructuredGridTools as st
-import CAMP.UnstructuredGridOperators as uo
-import CAMP.StructuredGridOperators as so
+import CAMP.camp.Core as core
+import CAMP.camp.FileIO as io
+import CAMP.camp.StructuredGridTools as st
+import CAMP.camp.UnstructuredGridOperators as uo
+import CAMP.camp.StructuredGridOperators as so
 
 import matplotlib
 matplotlib.use('qt5agg')
@@ -88,7 +88,7 @@ def def_block(rabbit, block):
     phi_inv.data = phi_inv.data.flip(0)
 
     # Load the volume to apply this field to
-    bf = io.LoadITKFile(f'{data_dir}{vol_ext}difference_volume.mhd', device=device)
+    bf = io.LoadITKFile(f'{data_dir}{vol_ext}scatter_volume.mhd', device=device)
     seg = io.LoadITKFile(f'{data_dir}{vol_ext}segmentation_volume.mhd', device=device)
 
     # aff_grid = core.StructuredGrid.FromGrid(phi_inv, channels=3)
@@ -130,11 +130,11 @@ def def_block(rabbit, block):
     test = so.ApplyGrid.Create(stitch_list[0], pad_mode='zeros', device=device)(bf, stitch_list[0])
     io.SaveITKFile(test, '/home/sci/blakez/HOPEFUL.mhd')
 
-    unstitch_files = sorted(glob.glob(f'{data_dir}{vol_ext}{block}_phi_stitch_*.mhd'))
-    phi_unstitch = io.LoadITKFile(unstitch_files[0], device=device)
-    phi_unstitch.set_size((60, 1024, 1024))
-    test_undone = so.ApplyGrid.Create(phi_unstitch, pad_mode='zeros', device=device)(test, phi_unstitch)
-    io.SaveITKFile(test_undone, '/home/sci/blakez/HOPEFUL_undone.mhd')
+    # unstitch_files = sorted(glob.glob(f'{data_dir}{vol_ext}{block}_phi_stitch_*.mhd'))
+    # phi_unstitch = io.LoadITKFile(unstitch_files[0], device=device)
+    # phi_unstitch.set_size((60, 1024, 1024))
+    # test_undone = so.ApplyGrid.Create(phi_unstitch, pad_mode='zeros', device=device)(test, phi_unstitch)
+    # io.SaveITKFile(test_undone, '/home/sci/blakez/HOPEFUL_undone.mhd')
 
     def_bf = so.ApplyGrid.Create(phi_inv, pad_mode='zeros', device=device)(bf, phi_inv)
     def_seg = so.ApplyGrid.Create(phi_inv, pad_mode='zeros', device=device)(seg, phi_inv)
@@ -214,7 +214,7 @@ def compose_blocks(rabbit):
 
 
 if __name__ == '__main__':
-    rabbit = '18_047'
+    rabbit = '18_060'
     data_dir = f'/hdscratch/ucair/{rabbit}/blockface/'
     block_list = [x.split('/')[-1] for x in sorted(glob.glob(f'{data_dir}/block*'))]
 
@@ -224,7 +224,7 @@ if __name__ == '__main__':
     # Dont need to do this for the middle block - should I change this so that things are just identity??
     block_list.remove(block_list[len(block_list) // 2])
 
-    for block in block_list[6:]:
+    for block in block_list[5:7]:
         print(f'Deforming {block} volumes ... ', end='')
         def_block(rabbit, block=block)
         print('Done')

@@ -15,11 +15,11 @@ import skimage.segmentation as seg
 from collections import OrderedDict
 import torch.optim as optim
 
-import CAMP.Core as core
-import CAMP.FileIO as io
-import CAMP.StructuredGridTools as st
-import CAMP.UnstructuredGridOperators as uo
-import CAMP.StructuredGridOperators as so
+import CAMP.camp.Core as core
+import CAMP.camp.FileIO as io
+import CAMP.camp.StructuredGridTools as st
+import CAMP.camp.UnstructuredGridOperators as uo
+import CAMP.camp.StructuredGridOperators as so
 
 import matplotlib
 matplotlib.use('qt5agg')
@@ -37,7 +37,7 @@ device = 'cuda:1'
 
 def block_stacking(rabbit):
 
-    rabbit_dir = f'/hdscratch/ucair/{rabbit}/blockface/'
+    rabbit_dir = f'/hdscratch2/{rabbit}/blockface/'
     raw_ext = '/surfaces/raw/'
     rigid_ext = '/surfaces/rigid/'
     deform_ext = '/surfaces/deformable/'
@@ -47,9 +47,18 @@ def block_stacking(rabbit):
     # Get a list of the blocks
     block_list = sorted(glob.glob(f'{rabbit_dir}block*'))
 
+    # for block_path in block_list:
+    #     block = block_path.split('/')[-1]
+    #     with open(f'{rabbit_dir}{block}{raw_ext}{block}_deformable_config.yaml', 'r') as f:
+    #         params = yaml.load(f, Loader=yaml.FullLoader)
+    #     params['propagation_sigma'] = [8.0, 8.0, 3.0]
+    #     params['currents_sigma'] = [3.0, 1.5]
+    #     with open(f'{rabbit_dir}{block}{raw_ext}{block}_deformable_config.yaml', 'w') as f:
+    #         yaml.dump(params, f)
+
     # Determine the middle block
     # middle_block = block_list[9]
-    middle_block = block_list[3]
+    middle_block = block_list[5]
     foot_blocks = block_list[block_list.index(middle_block):]
     head_blocks = block_list[:block_list.index(middle_block) + 1][::-1]
 
@@ -67,7 +76,8 @@ def block_stacking(rabbit):
 
     if rerun or not os.path.exists(f'{middle_block}{vol_ext}{middle_block.split("/")[-1]}_phi_stacking.mhd'):
         mid_block = middle_block.split('/')[-1]
-        middle = io.LoadITKFile(f'{middle_block}{vol_ext}difference_volume.mhd')
+        # middle = io.LoadITKFile(f'{middle_block}{vol_ext}difference_volume.mhd')
+        middle = io.LoadITKFile(f'{middle_block}{vol_ext}difference_volume.nii.gz')
         # middle = io.LoadITKFile(f'{middle_block}{vol_ext}{mid_block}_volume.nrrd')
         middle.set_size((60, 1024, 1024))
         deformation = core.StructuredGrid.FromGrid(middle, channels=3)
@@ -80,10 +90,10 @@ def block_stacking(rabbit):
         np.savetxt(f'{rabbit_dir}{mid_block}{vol_ext}{mid_block}_rigid_tform.txt', affine_tform.numpy())
 
         # Copy the files from raw to deformable for the middle surface
-        if os.path.exists(f'{rabbit_dir}{mid_block}{stitch_ext}'):
-            mid_path = f'{mid_block}{stitch_ext}'
-        else:
-            mid_path = f'{mid_block}{raw_ext}'
+        # if os.path.exists(f'{rabbit_dir}{mid_block}{stitch_ext}'):
+        #     mid_path = f'{mid_block}{stitch_ext}'
+        # else:
+        mid_path = f'{mid_block}{raw_ext}'
 
         files = [
             f'{rabbit_dir}{mid_path}{mid_block}_decimate.obj',
@@ -123,10 +133,10 @@ def block_stacking(rabbit):
         if source_block in skip_blocks:
             continue
 
-        if os.path.exists(f'{rabbit_dir}{source_block}{stitch_ext}'):
-            mid_path = f'{source_block}{stitch_ext}'
-        else:
-            mid_path = f'{source_block}{raw_ext}'
+        # if os.path.exists(f'{rabbit_dir}{source_block}{stitch_ext}'):
+        #     mid_path = f'{source_block}{stitch_ext}'
+        # else:
+        mid_path = f'{source_block}{raw_ext}'
 
         target_surface_path = f'{rabbit_dir}{target_block}{deform_ext}{target_block}_foot_deformable.obj'
         source_surface_path = f'{rabbit_dir}{mid_path}{source_block}_head.obj'
@@ -188,14 +198,16 @@ def block_stacking(rabbit):
 
         # Load or create the dictionary for registration
         try:
+            if rerun:
+                raise IOError
             with open(f'{rabbit_dir}{source_block}{raw_ext}{source_block}_affine_config.yaml', 'r') as f:
                 params = yaml.load(f, Loader=yaml.FullLoader)
         except IOError:
             params = {
                 'spatial_sigma': [2.0, 0.5],
-                'affine_lr': 1.0e-06,
-                'translation_lr': 1.0e-04,
-                'converge': 0.01,
+                'affine_lr': 1.0e-08,
+                'translation_lr': 1.0e-05,
+                'converge': 1.0,
                 'rigid_transform': True
             }
 
@@ -253,32 +265,42 @@ def block_stacking(rabbit):
                 io.WriteOBJ(extra_surface.vertices, extra_surface.indices, f'{out_path}{name}')
 
         try:
+            if rerun:
+                raise IOError
             with open(f'{rabbit_dir}{source_block}{raw_ext}{source_block}_deformable_config.yaml', 'r') as f:
                 params = yaml.load(f, Loader=yaml.FullLoader)
         except IOError:
             params = {
-                'currents_sigma': [3.0, 1.5],
-                'propagation_sigma': [2.0, 2.0, 3.0],
-                'deformable_lr': [2.0e-04, 1.0e-04],
-                'converge': 0.75,
+                'currents_sigma': [3.0, 0.5],
+                'propagation_sigma': [6.0, 6.0, 3.0],
+                'deformable_lr': [1.0e-04, 0.5e-04],
+                'converge': 1.0,
                 'grid_size': [20, 100, 100],
                 'niter': 500
             }
+            # params = {
+            #     'currents_sigma': [3.0, 1.5],
+            #     'propagation_sigma': [6.0, 6.0, 3.0],
+            #     'deformable_lr': [2.0e-04, 1.0e-04],
+            #     'converge': 1.0,
+            #     'grid_size': [20, 100, 100],
+            #     'niter': 500
+            # }
 
-        # if 'spatial_sigma' in params.keys():
-        #     params['currents_sigma'] = params['spatial_sigma']
-        #     del params['spatial_sigma']
-        # if 'phi_inv_size' in params.keys():
-        #     params['grid_size'] = params['phi_inv_size']
-        #     del params['phi_inv_size']
-        # if 'rigid_transform' in params.keys():
-        #     del params['rigid_transform']
-        # if 'smoothing_sigma' in params.keys():
-        #     params['propagation_sigma'] = params['smoothing_sigma']
-        #     del params['smoothing_sigma']
-        #
-        # if type(params['deformable_lr']) is not list:
-        #     params['deformable_lr'] = [params['deformable_lr']] * len(params['spatial_sigma'])
+        # Account for some old parameter names - can be deleted later
+        if 'spatial_sigma' in params.keys():
+            params['currents_sigma'] = params['spatial_sigma']
+            del params['spatial_sigma']
+        if 'phi_inv_size' in params.keys():
+            params['grid_size'] = params['phi_inv_size']
+            del params['phi_inv_size']
+        if 'rigid_transform' in params.keys():
+            del params['rigid_transform']
+        if 'smoothing_sigma' in params.keys():
+            params['propagation_sigma'] = params['smoothing_sigma']
+            del params['smoothing_sigma']
+        if type(params['deformable_lr']) is not list:
+            params['deformable_lr'] = [params['deformable_lr']] * len(params['spatial_sigma'])
 
         # Do the deformable registration
         def_surface, def_extras, phi, phi_inv = tools.deformable_register(
@@ -312,8 +334,8 @@ def block_stacking(rabbit):
 
         for extra_path, extra_surface in zip(extras_paths, def_extras):
             name = extra_path.split('/')[-1].split(f'{source_block}')[-1].replace('.', '_deformable.')
-            if '_stitched' in name:
-                name = name.replace('_stitched', '')
+            # if '_stitched' in name:
+            #     name = name.replace('_stitched', '')
             if not os.path.exists(f'{out_path}{name}') or rerun:
                 io.WriteOBJ(extra_surface.vertices, extra_surface.indices, f'{out_path}{name}')
 
@@ -397,14 +419,16 @@ def block_stacking(rabbit):
 
         # Load or create the dictionary for registration
         try:
+            if rerun:
+                raise IOError
             with open(f'{rabbit_dir}{source_block}{raw_ext}{source_block}_affine_config.yaml', 'r') as f:
                 params = yaml.load(f, Loader=yaml.FullLoader)
         except IOError:
             params = {
                 'spatial_sigma': [2.0, 0.5],
-                'affine_lr': 1.0e-06,
-                'translation_lr': 1.0e-04,
-                'converge': 0.01,
+                'affine_lr': 1.0e-08,
+                'translation_lr': 1.0e-05,
+                'converge': 1.0,
                 'rigid_transform': True
             }
 
@@ -462,14 +486,16 @@ def block_stacking(rabbit):
                 io.WriteOBJ(extra_surface.vertices, extra_surface.indices, f'{out_path}{name}')
 
         try:
+            if rerun:
+                raise IOError
             with open(f'{rabbit_dir}{source_block}{raw_ext}{source_block}_deformable_config.yaml', 'r') as f:
                 params = yaml.load(f, Loader=yaml.FullLoader)
         except IOError:
             params = {
-                'currents_sigma': [3.0, 1.5],
-                'propagation_sigma': [2.0, 2.0, 3.0],
-                'deformable_lr': [2.0e-04, 1.0e-04],
-                'converge': 0.75,
+                'currents_sigma': [3.0, 0.5],
+                'propagation_sigma': [6.0, 6.0, 3.0],
+                'deformable_lr': [1.0e-04, 0.5e-04],
+                'converge': 1.0,
                 'grid_size': [20, 100, 100],
                 'niter': 500
             }
@@ -530,7 +556,5 @@ def block_stacking(rabbit):
 
 
 if __name__ == '__main__':
-    rabbit = '18_062'
-    # process_mic(rabbit)
-    # match_bf_mic()
+    rabbit = 'ExVivoTests'
     block_stacking(rabbit)

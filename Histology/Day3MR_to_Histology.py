@@ -16,11 +16,11 @@ import skimage.segmentation as seg
 from collections import OrderedDict
 import torch.optim as optim
 
-import CAMP.Core as core
-import CAMP.FileIO as io
-import CAMP.StructuredGridTools as st
-import CAMP.UnstructuredGridOperators as uo
-import CAMP.StructuredGridOperators as so
+import CAMP.camp.Core as core
+import CAMP.camp.FileIO as io
+import CAMP.camp.StructuredGridTools as st
+import CAMP.camp.UnstructuredGridOperators as uo
+import CAMP.camp.StructuredGridOperators as so
 
 import matplotlib
 matplotlib.use('qt5agg')
@@ -195,7 +195,7 @@ def block_stitch(block_path):
     return phi
 
 
-def mr_to_block(block_path, rabbit, t1_vol, t2_vol, ext_vols=[]):
+def mr_to_block(block_path, rabbit, t1_vol, npv_vol=None, t2_vol=None, ext_vols=[]):
 
     day3_dir = f'/hdscratch/ucair/{rabbit}/mri/invivo/'
     stacked_blocks_dir = f'/hdscratch/ucair/{rabbit}/blockface/recons/'
@@ -228,19 +228,24 @@ def mr_to_block(block_path, rabbit, t1_vol, t2_vol, ext_vols=[]):
     to_block = gd.generate(rabbit, block=block, source_space='invivo', target_space='blockface')
 
     # Load the Day3 MR file to be deformed
-    t2_motion = io.LoadITKFile(t2_vol, device=device)
+    # t2_motion = io.LoadITKFile(t2_vol, device=device)
     ce_t1 = io.LoadITKFile(t1_vol, device=device)
-    adc = io.LoadITKFile(ext_vols[0], device=device)
+    # adc = io.LoadITKFile(ext_vols[0], device=device)
+    npv = io.LoadITKFile(npv_vol, device=device)
 
     torch.cuda.empty_cache()
 
-    t2_to_block = so.ApplyGrid.Create(to_block, device=device, pad_mode='zeros')(t2_motion, to_block)
-    io.SaveITKFile(t2_to_block, f'{invivo_out}invivo_t2_to_{block}.mhd')
+    # t2_to_block = so.ApplyGrid.Create(to_block, device=device, pad_mode='zeros')(t2_motion, to_block)
+    # io.SaveITKFile(t2_to_block, f'{invivo_out}invivo_t2_to_{block}.mhd')
 
     t1_to_block = so.ApplyGrid.Create(to_block, device=device, pad_mode='zeros')(ce_t1, to_block)
     io.SaveITKFile(t1_to_block, f'{invivo_out}invivo_ce_t1_to_{block}.mhd')
-    adc_to_block = so.ApplyGrid.Create(to_block, device=device, pad_mode='zeros')(adc, to_block)
-    io.SaveITKFile(adc_to_block, f'{invivo_out}invivo_adc_to_{block}.mhd')
+
+    # adc_to_block = so.ApplyGrid.Create(to_block, device=device, pad_mode='zeros')(adc, to_block)
+    # io.SaveITKFile(adc_to_block, f'{invivo_out}invivo_adc_to_{block}.mhd')
+    #
+    npv_to_block = so.ApplyGrid.Create(to_block, device=device, pad_mode='zeros')(npv, to_block)
+    io.SaveITKFile(npv_to_block, f'{invivo_out}invivo_npv_to_{block}.mhd')
 
     # # Load the exvivo
     # ex_ce_t1 = io.LoadITKFile(
@@ -267,12 +272,18 @@ def mr_to_block(block_path, rabbit, t1_vol, t2_vol, ext_vols=[]):
 if __name__ == '__main__':
     rabbit = '18_062'
     rabbit_dir = f'/hdscratch/ucair/{rabbit}/blockface/'
-    t2_vol = '/hdscratch/ucair/18_062/mri/invivo/volumes/raw/016_m--e_t2_spc_1mm_iso_cor_TE300_2ave.nii.gz'
-    adc_vol = '/hdscratch/ucair/18_062/mri/invivo/volumes/raw/024_m--e_2D_ss_DWI_ADC.nii.gz'
+    # t2_vol = '/hdscratch/ucair/18_062/mri/invivo/volumes/raw/016_m--e_t2_spc_1mm_iso_cor_TE300_2ave.nii.gz'
+    # adc_vol = '/hdscratch/ucair/18_062/mri/invivo/volumes/raw/024_m--e_2D_ss_DWI_ADC.nii.gz'
+    # t1_vol = '/hdscratch/ucair/18_062/mri/invivo/volumes/raw/029_----_3D_VIBE_0.5x0.5x1_NoGrappa_3avg_fatsat_cor.nii.gz'
+    # npv_vol = '/hdscratch/ucair/18_062/mri/invivo/volumes/raw/028_----_Day3_lr_NPV_Segmentation_062.nrrd'
+
+    t2_vol = '/hdscratch/ucair/18_047/mri/invivo/volumes/raw/008_m--e_t2_spc_1mm_iso_cor.nii.gz'
+    adc_vol = '/hdscratch/ucair/18_047/mri/invivo/volumes/raw/008_m--e_t2_spc_1mm_iso_cor.nii.gz'
     t1_vol = '/hdscratch/ucair/18_062/mri/invivo/volumes/raw/029_----_3D_VIBE_0.5x0.5x1_NoGrappa_3avg_fatsat_cor.nii.gz'
+    npv_vol = '/hdscratch/ucair/18_062/mri/invivo/volumes/raw/028_----_Day3_lr_NPV_Segmentation_062.nrrd'
 
     # Get a list of the blocks
     block_list = sorted(glob.glob(f'{rabbit_dir}block*'))
 
-    for block_path in [block_list[4]]:
-        mr_to_block(block_path, rabbit, t2_vol=t2_vol, t1_vol=t1_vol, ext_vols=[adc_vol])
+    for block_path in [block_list[2]]:
+        mr_to_block(block_path, rabbit, t1_vol=t1_vol, npv_vol=npv_vol)

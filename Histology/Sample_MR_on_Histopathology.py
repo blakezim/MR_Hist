@@ -1,5 +1,6 @@
 import os
 import sys
+import glob
 sys.path.append("/home/sci/blakez/code/")
 
 import h5py
@@ -7,9 +8,9 @@ import torch
 import numpy as np
 from skimage import measure
 
-import CAMP.Core as core
-import CAMP.FileIO as io
-import CAMP.StructuredGridOperators as so
+import CAMP.camp.Core as core
+import CAMP.camp.FileIO as io
+import CAMP.camp.StructuredGridOperators as so
 
 import matplotlib
 from matplotlib.colors import ListedColormap
@@ -22,12 +23,12 @@ device = 'cuda:1'
 
 def generate_figures(slice, segs, out_path, base_name, save=True, extra_cont=None):
 
-    contour_width = 0.8
+    contour_width = 1.8
     shape = slice.data.permute(1, 2, 0).shape[0:2]
     one_mm = 1.0 / slice.spacing[0]
     scale = 2.0
     scale_pix = scale * one_mm
-    x_off = 500
+    x_off = 200 # 500
     y_off = 600
 
     part_contours = []
@@ -56,19 +57,47 @@ def generate_figures(slice, segs, out_path, base_name, save=True, extra_cont=Non
 
     part_contours = part_contours[::-1]
 
+    #
+    # plt.gca().patch.set_facecolor([0, 0, 0, 0])
+    # plt.axis('off')
+    # plt.figure()
+    # plt.imshow(test_alpha)
+    # plt.savefig('/home/sci/blakez/test_transparent.png', dpi=300, bbox_inches='tight', pad_inches=0, transparent=True)
+
     # Plot the original image
+    masked_slice = np.ma.masked_where(slice.data.cpu() == 0, slice.data.cpu()).squeeze()
+
+    # Shade the region of the ablated histology
+    from matplotlib.colors import LinearSegmentedColormap
+    colors = [(0.0, 0.0, 0.0), (0.8901960784313725, 0.4666666666666667, 0.7607843137254902)]
+    cm = LinearSegmentedColormap.from_list('hist_color', colors, N=1)
     plt.figure()
-    plt.imshow(slice.data.permute(1, 2, 0).squeeze().cpu(), cmap='gray')
-    plt.plot([y_off, y_off + scale_pix], [shape[0] - x_off, shape[0] - x_off], 'w-', linewidth=contour_width)
+    masked = np.ma.masked_where(segs[-1].data.cpu().squeeze() == 0, segs[-1].data.cpu().squeeze())
+    plt.imshow(masked, cmap=cm, alpha=0.5)
     plt.axis('off')
+    if save:
+        plt.savefig(f'{out_path}/{base_name}_shaded_ablated_hist.png', dpi=600, bbox_inches='tight', pad_inches=0, transparent=True)
+    #
+
+    if masked_slice.shape[0] == 3:
+        slice_np = slice.data.cpu().permute(1, 2, 0)
+        masked_slice = torch.cat([slice_np, (slice_np[:, :, 0] > 0).float().unsqueeze(-1)], -1)
+    else:
+        masked_slice = masked_slice.squeeze()
+    plt.figure()
+    plt.imshow(masked_slice, cmap='gray')
+    plt.plot([y_off, y_off + scale_pix], [shape[0] - x_off, shape[0] - x_off], 'k-', linewidth=contour_width)
+    plt.axis('off')
+    plt.gca().patch.set_facecolor([0, 0, 0, 0])
     plt.show()
     if save:
-        plt.savefig(f'{out_path}/{base_name}_original.png', dpi=600, bbox_inches='tight', pad_inches=0)
+        plt.savefig(f'{out_path}/{base_name}_original.png', dpi=600, bbox_inches='tight', pad_inches=0, transparent=True)
 
     # Plot the image with contours
     plt.figure()
-    plt.imshow(slice.data.permute(1, 2, 0).squeeze().cpu(), cmap='gray')
-    plt.plot([y_off, y_off + scale_pix], [shape[0] - x_off, shape[0] - x_off], 'w-', linewidth=contour_width)
+    plt.imshow(masked_slice, cmap='gray')
+    plt.plot([y_off, y_off + scale_pix], [shape[0] - x_off, shape[0] - x_off], 'k-', linewidth=contour_width)
+
     # for contour in part_contours[0]:
     #     plt.plot(contour[:, 1], contour[:, 0], color='crimson', linewidth=contour_width)
 
@@ -84,11 +113,12 @@ def generate_figures(slice, segs, out_path, base_name, save=True, extra_cont=Non
 
     try:
         for contour in part_contours[2]:
-            plt.plot(contour[:, 1], contour[:, 0], 'gold', linewidth=contour_width)
+            plt.plot(contour[:, 1], contour[:, 0], color=matplotlib._cm._tab10_data[6], linewidth=contour_width)
     except IndexError:
         pass
 
     plt.axis('off')
+    plt.gca().patch.set_facecolor([0, 0, 0, 0])
     plt.show()
     plt.pause(1.0)
     if save:
@@ -172,6 +202,7 @@ def sample_on_histopathology(rabbit, block, img_num, bf_slice):
         mic.shape[1:],
         tensor=torch.tensor(mic, dtype=torch.float32, device=device),
         spacing=torch.tensor([10.0, 10.0], dtype=torch.float32, device=device),
+        origin=(torch.tensor(mic.shape[1:]) / 2) * -1,
         device=device,
         dtype=torch.float32,
         channels=3
@@ -200,16 +231,45 @@ def sample_on_histopathology(rabbit, block, img_num, bf_slice):
     sd = 'cuda:0'
 
     mr_invivo_t1_slice = get_mr_slice(f'{invivo_dir}/invivo_ce_t1_to_{block}.mhd', blockface, bf_slice - 1, sd)
-    mr_invivo_t2_slice = get_mr_slice(f'{invivo_dir}/invivo_t2_to_{block}.mhd', blockface, bf_slice - 1, sd)
-    mr_invivo_adc_slice = get_mr_slice(f'{invivo_dir}/invivo_adc_to_{block}.mhd', blockface, bf_slice - 1, sd)
+    # mr_invivo_t2_slice = get_mr_slice(f'{invivo_dir}/invivo_t2_to_{block}.mhd', blockface, bf_slice - 1, sd)
+    # mr_invivo_adc_slice = get_mr_slice(f'{invivo_dir}/invivo_adc_to_{block}.mhd', blockface, bf_slice - 1, sd)
+    mr_invivo_npv_slice = get_mr_slice(f'{invivo_dir}/invivo_npv_to_{block}.mhd', blockface, bf_slice - 1, sd)
+    mr_d0_npv_slice = get_mr_slice(f'/hdscratch/ucair/18_062/mri/day0/volumes/deformable/block04/day0_npv_to_{block}.mhd', blockface, bf_slice - 1, sd)
+    mr_d0_t1_slice = get_mr_slice(
+        f'/hdscratch/ucair/18_062/mri/day0/volumes/deformable/block04/day0_t1_to_{block}.mhd', blockface, bf_slice - 1,
+        sd)
+    mr_d0_t1_nc_slice = get_mr_slice(
+        f'/hdscratch/ucair/18_062/mri/day0/volumes/deformable/block04/day0_t1_nc_to_{block}.mhd', blockface, bf_slice - 1,
+        sd)
+    mr_log_ctd_slice = get_mr_slice(
+        f'/hdscratch/ucair/18_062/mri/day0/volumes/deformable/block04/day0_log_ctd_to_{block}.mhd', blockface, bf_slice - 1,
+        sd)
+    mr_log_ctd_slice.data = torch.exp(mr_log_ctd_slice.data)
+
+    def create_circular_mask(h, w, center=None, radius=None):
+
+        if center is None:  # use the middle of the image
+            center = (int(w / 2), int(h / 2))
+        if radius is None:  # use the smallest distance between the center and image walls
+            radius = min(center[0], center[1], w - center[0], h - center[1])
+
+        Y, X = np.ogrid[:h, :w]
+        dist_from_center = np.sqrt((X - center[0]) ** 2 + (Y - center[1]) ** 2)
+
+        mask = dist_from_center <= radius
+        return mask
+
+    circle_mask = create_circular_mask(2586, 3426, center=[1831, 1100], radius=700)
+    mr_log_ctd_slice.data = mr_log_ctd_slice.data * torch.tensor(circle_mask, device=device).float()
     # mr_day0_t2_slice = get_mr_slice(f'{day0_dir}/day0_t2_to_{block}.mhd', blockface, bf_slice - 1, sd)
     # mr_day0_ctd_slice = get_mr_slice(f'{day0_dir}/day0_ctd_to_{block}.mhd', blockface, bf_slice - 1, sd)
     # mr_day0_t1_slice = get_mr_slice(f'{day0_dir}/day0_ce_t1_to_{block}.mhd', blockface, bf_slice - 1, sd)
     # mr_day0_npv_slice = get_mr_slice(f'{day0_dir}/day0_npv_to_{block}.mhd', blockface, bf_slice - 1, sd)
 
-    io.SaveITKFile(mr_invivo_t1_slice, f'{invivo_mr_out_path}/invivo_ce_t1_as_bf_img_{img_num}.mhd')
-    io.SaveITKFile(mr_invivo_t2_slice, f'{invivo_mr_out_path}/invivo_t2_as_bf_img_{img_num}.mhd')
-    io.SaveITKFile(mr_invivo_adc_slice, f'{invivo_mr_out_path}/invivo_adc_as_bf_img_{img_num}.mhd')
+    # io.SaveITKFile(mr_invivo_t1_slice, f'{invivo_mr_out_path}/invivo_ce_t1_as_bf_img_{img_num}.mhd')
+    # io.SaveITKFile(mr_invivo_t2_slice, f'{invivo_mr_out_path}/invivo_t2_as_bf_img_{img_num}.mhd')
+    # io.SaveITKFile(mr_invivo_adc_slice, f'{invivo_mr_out_path}/invivo_adc_as_bf_img_{img_num}.mhd')
+    # io.SaveITKFile(mr_invivo_npv_slice, f'{invivo_mr_out_path}/invivo_npv_as_bf_img_{img_num}.mhd')
     # io.SaveITKFile(mr_day0_t2_slice, f'{day0_mr_out_path}/day0_t2_as_bf_img_{img_num}.mhd')
     # io.SaveITKFile(mr_day0_ctd_slice, f'{day0_mr_out_path}/day0_ctd_as_bf_img_{img_num}.mhd')
     # io.SaveITKFile(mr_day0_t1_slice, f'{day0_mr_out_path}/day0_ce_t1_as_bf_img_{img_num}.mhd')
@@ -222,9 +282,40 @@ def sample_on_histopathology(rabbit, block, img_num, bf_slice):
     for seg in segs:
         histology_seg += seg
 
+    ctd_slice = mr_log_ctd_slice.data[0].cpu()
+    ctd_mask = np.logical_and(ctd_slice > 10.0, circle_mask == 1)
+    masked_thermal = np.ma.masked_where(ctd_mask == 0.0, ctd_slice.numpy()).squeeze()
+    plt.figure()
+    # plt.imshow(t1_nc.data.cpu()[0, slice_n].squeeze(), aspect=1.0 / aspect, cmap='gray')
+    plt.imshow(masked_thermal, cmap='jet', vmin=10, vmax=240)
+    plt.gca().patch.set_facecolor([0, 0, 0, 0])
+    plt.axis('off')
+
+    zero_slice = np.zeros_like(ctd_slice)
+    masked_slice = np.ma.masked_where(zero_slice == 0.0, zero_slice).squeeze()
+    plt.figure()
+    plt.imshow(masked_slice.squeeze(), cmap='gray')
+    npv_contours = measure.find_contours(ctd_slice.data.squeeze().cpu().numpy() * circle_mask, 240)
+    for contour in npv_contours:
+        plt.plot(contour[:, 1], contour[:, 0], color='red', linewidth=1.8)
+    plt.axis('off')
+    plt.gca().patch.set_facecolor([0, 0, 0, 0])
+    plt.savefig(f'{invivo_mr_out_path}/day0_ctd_contour.png', dpi=600, bbox_inches='tight', pad_inches=0, transparent=True)
+    save = True
+
+    # Generate the figures without masking
+    generate_figures(
+        mr_d0_t1_slice, segs, out_path=invivo_mr_out_path, base_name='day0_ce_t1_no_mask', save=save
+    )
+
+    generate_figures(
+        mr_invivo_t1_slice, segs, out_path=invivo_mr_out_path, base_name='deformed_invivo_ce_t1_MR_no_mask', save=save
+    )
+
     histology_image = histology_seg * deformed_histology
     mr_invivo_t1_slice = histology_seg * mr_invivo_t1_slice
-    mr_invivo_t2_slice = histology_seg * mr_invivo_t2_slice
+    mr_d0_t1_slice = histology_seg * mr_d0_t1_slice
+    # mr_invivo_t2_slice = histology_seg * mr_invivo_t2_slice
     # mr_day0_t2_slice = histology_seg * mr_day0_t2_slice
     # mr_day0_ctd_slice = histology_seg * mr_day0_ctd_slice
     # mr_day0_t1_slice = histology_seg * mr_day0_t1_slice
@@ -258,7 +349,6 @@ def sample_on_histopathology(rabbit, block, img_num, bf_slice):
     plt.show()
     plt.pause(1.0)
 
-    save = True
 
     if save:
         plt.savefig(f'{invivo_mr_out_path}/histology_segmentation_map.png', dpi=600, bbox_inches='tight', pad_inches=0)
@@ -268,7 +358,7 @@ def sample_on_histopathology(rabbit, block, img_num, bf_slice):
 
     # Generate the figure for showing the NPV on the Day0 MRI CE T1
     # contours = measure.find_contours(mr_day0_npv_slice.data.squeeze().cpu().numpy(), 0.5)
-    contours = measure.find_contours(mr_invivo_t1_slice.data.squeeze().cpu().numpy(), 0.5)
+
 
     # Plot the image with contours
     # plt.figure()
@@ -295,14 +385,17 @@ def sample_on_histopathology(rabbit, block, img_num, bf_slice):
     generate_figures(
         mr_invivo_t1_slice, segs, out_path=invivo_mr_out_path, base_name='deformed_invivo_ce_t1_MR', save=save
     )
-
     generate_figures(
-        mr_invivo_t2_slice, segs, out_path=invivo_mr_out_path, base_name='deformed_invivo_t2_MR', save=save
+        mr_d0_t1_slice, segs, out_path=invivo_mr_out_path, base_name='day0_ce_t1', save=save
     )
 
-    generate_figures(
-        mr_invivo_adc_slice, segs, out_path=invivo_mr_out_path, base_name='deformed_invivo_adc_MR', save=save
-    )
+    # generate_figures(
+    #     mr_invivo_t2_slice, segs, out_path=invivo_mr_out_path, base_name='deformed_invivo_t2_MR', save=save
+    # )
+
+    # generate_figures(
+    #     mr_invivo_adc_slice, segs, out_path=invivo_mr_out_path, base_name='deformed_invivo_adc_MR', save=save
+    # )
 
     # generate_figures(
     #     mr_day0_t2_slice, segs, out_path=day0_mr_out_path, base_name='deformed_day0_t2_MR', save=save
@@ -315,13 +408,61 @@ def sample_on_histopathology(rabbit, block, img_num, bf_slice):
     # generate_figures(
     #     mr_day0_t1_slice, segs, out_path=day0_mr_out_path, base_name='deformed_day0_ce_t1_MR', save=True
     # )
+    npv_contours = measure.find_contours(mr_invivo_npv_slice.data.squeeze().cpu().numpy(), 0.5)
+    zero_im = np.zeros_like(mr_invivo_npv_slice.data.squeeze().cpu().numpy())
+    fig = plt.figure()
+    # plt.imshow(mr_invivo_t1_slice.data.cpu().squeeze())
+    ax = fig.add_subplot()
+    ax.set_xlim([0, zero_im.shape[1]])
+    ax.set_ylim([0, zero_im.shape[0]])
+    for contour in npv_contours:
+        plt.plot(contour[:, 1], contour[:, 0], color=matplotlib._cm._tab10_data[2], linewidth=3.0)
+    ax.invert_yaxis()
+    ax.set_aspect(1)
+    plt.axis('off')
+    plt.savefig(f'{invivo_mr_out_path}/NPV_contours.png', dpi=600, bbox_inches='tight', pad_inches=0, transparent=True)
 
+    npv_contours = measure.find_contours(mr_d0_npv_slice.data.squeeze().cpu().numpy(), 0.5)
+    zero_im = np.zeros_like(mr_d0_npv_slice.data.squeeze().cpu().numpy())
+    fig = plt.figure()
+    # plt.imshow(mr_invivo_t1_slice.data.cpu().squeeze())
+    ax = fig.add_subplot()
+    ax.set_xlim([0, zero_im.shape[1]])
+    ax.set_ylim([0, zero_im.shape[0]])
+    for contour in npv_contours:
+        plt.plot(contour[:, 1], contour[:, 0], color=matplotlib._cm._tab10_data[0], linewidth=3.0)
+    ax.invert_yaxis()
+    ax.set_aspect(1)
+    plt.axis('off')
+    plt.savefig(f'{invivo_mr_out_path}/D0_NPV_contours.png', dpi=600, bbox_inches='tight', pad_inches=0, transparent=True)
+
+    if len(segs) == 3:
+        hst_contours = measure.find_contours(segs[-1].data.squeeze().cpu().numpy(), 0.5)
+        fig = plt.figure()
+        ax = fig.add_subplot()
+        ax.set_xlim([0, zero_im.shape[1]])
+        ax.set_ylim([0, zero_im.shape[0]])
+        for contour in hst_contours:
+            plt.plot(contour[:, 1], contour[:, 0], color=matplotlib._cm._tab10_data[6], linewidth=3.0)
+        ax.invert_yaxis()
+        ax.set_aspect(1)
+        plt.axis('off')
+
+        plt.savefig(f'{invivo_mr_out_path}/HST_contours.png', dpi=600, bbox_inches='tight', pad_inches=0, transparent=True)
+
+    plt.close('all')
     print('Done')
 
 
 if __name__ == '__main__':
     rabbit = '18_062'
-    block = 'block05'
-    img = '016'
-    blockface_slice = 16
-    sample_on_histopathology(rabbit, block, img, blockface_slice)
+
+    histology_dir = f'/hdscratch/ucair/{rabbit}/microscopic/'
+    block_list = sorted(glob.glob(f'/hdscratch/ucair/{rabbit}/microscopic/block*'))
+    for block_path in block_list[3:]:
+        block = block_path.split("/")[-1]
+        img_list = sorted(glob.glob(f'/hdscratch/ucair/{rabbit}/microscopic/{block}/raw/*image.jpg'))
+        img_list = [x.split('/')[-1].split('_')[1] for x in img_list]
+        for img in ['015']:
+            blockface_slice = int(img)
+            sample_on_histopathology(rabbit, block, img, blockface_slice)

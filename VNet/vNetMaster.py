@@ -12,7 +12,7 @@ import matplotlib
 from vNetModel import vnet_model
 from collections import OrderedDict
 
-matplotlib.use('Qt5Agg')
+# matplotlib.use('Qt5Agg')
 
 
 from types import SimpleNamespace
@@ -24,6 +24,8 @@ from torch.autograd import Variable
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import SubsetRandomSampler, SequentialSampler
+
+os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 
 
 def _get_branch(opt):
@@ -58,16 +60,17 @@ def get_loader(source, target, state, opt, stride=None):
 
     # Need to redo this so that only unseen blocks are in the testing
 
-    data_length = num_blocks * rep_factor
+    train_length = opt.train_len * rep_factor
+    infer_length = opt.infer_len * rep_factor
 
     if state == 'train':
-        dataset = TrainDataset(source, target, opt.cube, int(data_length * 0.9))
-        sampler = SubsetRandomSampler(range(0, int(data_length * 0.9)))
+        dataset = TrainDataset(source[0:opt.train_len], target[0:opt.train_len], opt.cube, train_length)
+        sampler = SubsetRandomSampler(range(0, train_length))
         return DataLoader(dataset, opt.trainBatchSize, sampler=sampler, num_workers=opt.threads)
 
     elif state == 'infer':
-        dataset = TrainDataset(source, target, opt.cube, data_length - int(data_length * 0.9))
-        sampler = SequentialSampler(range(int(data_length * 0.9), data_length))
+        dataset = TrainDataset(source[opt.infer_len:], target[opt.infer_len:], opt.cube, train_length)
+        sampler = SequentialSampler(range(0, infer_length))
         return DataLoader(dataset, opt.inferBatchSize, sampler=sampler, num_workers=opt.threads)
 
 
@@ -153,6 +156,9 @@ def train(opt):
     print('===> Loading Data')
     sourceTensor = []
     labelTensor = []
+
+    opt.train_len = len([x for x in sorted(glob.glob(dataDir + 'inputs/*.pth')) if '18_047' in x or '18_060' in x])
+    opt.infer_len = len(sorted(glob.glob(dataDir + 'inputs/*.pth'))) - opt.train_len
 
     for file in sorted(glob.glob(dataDir + 'inputs/*.pth')):
         sourceTensor.append(torch.load(file))
@@ -292,7 +298,7 @@ def eval(opt):
     # Load the data
     print('===> Loading Data ... ', end='')
     # Need to get the original size of the data
-    input_vol, orig_shape = generate_input_block(opt.block, opt.rabbit, opt=opt)
+    input_vol, orig_shape = generate_input_block(f'{opt.hd_root}{opt.rabbit}/', opt.block, opt=opt)
     print('Done')
 
     print('===> Loading Model ... ', end='')
@@ -324,37 +330,37 @@ def eval(opt):
     print('===> Resizing and Saving ... ', end='')
     pred = torch.nn.functional.interpolate(pred, size=orig_shape[-3:],
                                            mode='trilinear', align_corners=True)
-    with torch.no_grad():
-        # For fun, try a laplacian filter to sharpen the edges
-        kernel = [[[0, 0, 0],
-                   [0, 1, 0],
-                   [0, 0, 0]],
-                  [[0, 1, 0],
-                   [1, -6, 1],
-                   [0, 1, 0]],
-                  [[0, 0, 0],
-                   [0, 1, 0],
-                   [0, 0, 0]]
-                  ]
-        l_filt = nn.Conv3d(1, 1, (3, 3, 3), stride=1, padding=1, bias=False)
-        l_filt.weight[0] = torch.tensor(kernel).float()
-        l_filt = l_filt.to('cuda')
+    # with torch.no_grad():
+    #     # For fun, try a laplacian filter to sharpen the edges
+    #     kernel = [[[0, 0, 0],
+    #                [0, 1, 0],
+    #                [0, 0, 0]],
+    #               [[0, 1, 0],
+    #                [1, -6, 1],
+    #                [0, 1, 0]],
+    #               [[0, 0, 0],
+    #                [0, 1, 0],
+    #                [0, 0, 0]]
+    #               ]
+    #     l_filt = nn.Conv3d(1, 1, (3, 3, 3), stride=1, padding=1, bias=False)
+    #     l_filt.weight[0] = torch.tensor(kernel).float()
+    #     l_filt = l_filt.to('cuda')
+    #
+    #     pred = (pred - l_filt(pred)).squeeze()
 
-        pred = (pred - l_filt(pred)).squeeze()
-
-    save_volume(pred, opt)
+    save_volume(pred.squeeze(), opt)
     print('Done')
 
     print('===> Evaluation Complete')
 
 
 if __name__ == '__main__':
-    trainOpt = {'trainBatchSize': 10,
-                'inferBatchSize': 10,
+    trainOpt = {'trainBatchSize': 28,
+                'inferBatchSize': 28,
                 'nEpochs': 500,
                 'lr': 0.0007,
                 'cuda': True,
-                'threads': 4,
+                'threads': 12,
                 'cube': [64, 128, 128],
                 'resume': False,
                 'scheduler': True,
@@ -363,18 +369,40 @@ if __name__ == '__main__':
                 }
 
     evalOpt = {'evalBatchSize': 4,
-               'rabbit': '18_062',
+               'rabbit': '18_061',
                'block': 'block07',
                'cuda': True,
                'threads': 0,
                'hd_root': '/hdscratch/ucair/',
                'cube': [64, 128, 128],
-               'ckpt': '/scratch/ucair/blockface/output/2019-04-25-160303/epoch_70_model.pth',
+               'ckpt': '/usr/sci/scratch/blakez/blockface_data/output/2020-10-09-141713/epoch_200_model.pth',
                }
 
     evalOpt = SimpleNamespace(**evalOpt)
     trainOpt = SimpleNamespace(**trainOpt)
 
-    train(trainOpt)
-    # eval(evalOpt)
+    # train(trainOpt)
+    block_list = sorted(glob.glob(f'{evalOpt.hd_root}{evalOpt.rabbit}/blockface/block*'))
+    for block_path in block_list[1:]:
+        block = block_path.split('/')[-1]
+        print(f'{block} ... ')
+
+        import CAMP.Core as core
+        import CAMP.FileIO as io
+        scat_vol = io.LoadITKFile(f'{block_path}/volumes/raw/scatter_volume.mhd', device='cuda')
+        grad_scat = scat_vol.data[:, :-1, :, :].cpu() - scat_vol.data[:, 1:, :, :].cpu()
+        grad_scat = (grad_scat - grad_scat.min()) / (grad_scat.max() - grad_scat.min())
+        grad_scat = torch.cat([grad_scat[:, 0, :, :].unsqueeze(1), grad_scat], dim=1)
+        grad_scat = core.StructuredGrid(
+            size=scat_vol.size,
+            spacing=scat_vol.spacing,
+            origin=scat_vol.origin,
+            tensor=grad_scat[2].unsqueeze(0),
+            device='cuda',
+            channels=1
+        )
+        io.SaveITKFile(grad_scat, f'{block_path}/volumes/raw/scatter_gradient_volume.mhd')
+        evalOpt.block = block
+        eval(evalOpt)
+        print(f'{block} ... done')
     print('All Done')

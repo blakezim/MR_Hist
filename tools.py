@@ -5,14 +5,15 @@ import numpy as np
 import torch.optim as optim
 from collections import OrderedDict
 
-import CAMP.Core as core
-import CAMP.FileIO as io
+import CAMP.camp.Core as core
+import CAMP.camp.FileIO as io
 import skimage.segmentation as seg
-import CAMP.StructuredGridOperators as so
+import CAMP.camp.StructuredGridOperators as so
 
-from CAMP.Core import *
-from CAMP.UnstructuredGridOperators import *
-from CAMP.StructuredGridOperators import ApplyGrid, AffineTransform
+from CAMP.camp.Core import *
+from CAMP.camp.UnstructuredGridOperators import *
+from CAMP.camp.StructuredGridOperators.UnaryOperators.ApplyGridFilter import ApplyGrid
+from CAMP.camp.StructuredGridOperators.UnaryOperators.AffineTransformFilter import AffineTransform
 
 # import matplotlib
 #

@@ -9,9 +9,9 @@ import numpy as np
 
 import torch.optim as optim
 
-import CAMP.Core as core
-import CAMP.FileIO as io
-import CAMP.UnstructuredGridOperators as uo
+import CAMP.camp.Core as core
+import CAMP.camp.FileIO as io
+import CAMP.camp.UnstructuredGridOperators as uo
 
 device = 'cuda:1'
 
@@ -74,9 +74,9 @@ def affine(tar_surface, src_surface, affine_lr=1.0e-07, translation_lr=1.0e-06, 
     return full_aff
 
 
-def register(rabbit):
-    source_path = f'/hdscratch/ucair/{rabbit}/mri/exvivo/surfaces/raw/'
-    target_path = f'/hdscratch/ucair/{rabbit}/mri/invivo/surfaces/raw/'
+def register(rabbit, base_dir='/hdscratch/ucair/'):
+    source_path = f'{base_dir}{rabbit}/mri/exvivo/surfaces/raw/'
+    target_path = f'{base_dir}{rabbit}/mri/invivo/surfaces/raw/'
 
     source_file = f'{source_path}exvivo_ablation_region_decimate.obj'
     target_file = f'{target_path}invivo_ablation_region_decimate.obj'
@@ -96,10 +96,10 @@ def register(rabbit):
             params = yaml.load(f, Loader=yaml.FullLoader)
     except IOError:
         params = {
-            'spatial_sigma': [20.0],
-            'affine_lr': 1.0e-08,
-            'translation_lr': 1.0e-05,
-            'converge': 1.5
+            'spatial_sigma': [15.0],
+            'affine_lr': 1.0e-07,
+            'translation_lr': 1.0e-06,
+            'converge': 4.0
         }
 
     try:
@@ -135,10 +135,10 @@ def register(rabbit):
             params = yaml.load(f, Loader=yaml.FullLoader)
     except IOError:
         params = {
-            'currents_sigma': [5.0, 2.0],
-            'propagation_sigma': [10.0, 10.0, 10.0],
-            'deformable_lr': [1.0e-04, 1.0e-04],
-            'converge': 1.0,
+            'currents_sigma': [5.0, 1.0],
+            'propagation_sigma': [8.0, 8.0, 8.0],
+            'deformable_lr': [2.0e-04, 1.0e-04],
+            'converge': 4.0,
             'phi_inv_size': [32, 32, 32],
             'n_iters': 500,
         }

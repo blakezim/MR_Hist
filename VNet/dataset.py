@@ -10,9 +10,8 @@ import torchvision.transforms.functional as TF
 from PIL import Image
 import matplotlib
 
-matplotlib.use('Qt5Agg')
-import matplotlib.pyplot as plt
-
+# matplotlib.use('Qt5Agg')
+# import matplotlib.pyplot as plt
 
 
 def is_image_file(filename):

@@ -52,16 +52,16 @@ class InputTransition(nn.Module):
     def __init__(self, outChans, elu):
         super(InputTransition, self).__init__()
         # self.pad = nn.ReplicationPad3d(2)
-        self.conv1 = nn.Conv3d(6, 48, kernel_size=5, padding=2)
-        self.bn1 = ContBatchNorm3d(48)
-        self.relu1 = ELUCons(elu, 16)
-        self.conv2 = nn.Conv3d(48, 16, kernel_size=5, padding=2)
+        self.conv1 = nn.Conv3d(18, 36, kernel_size=5, padding=2)
+        self.bn1 = ContBatchNorm3d(36)
+        self.relu1 = ELUCons(elu, 4)
+        self.conv2 = nn.Conv3d(36, 4, kernel_size=5, padding=2)
 
     def forward(self, x):
         # do we want a PRELU here as well?
         out = self.bn1(self.conv1(x))
         # split input in to 16 channels
-        x16 = torch.cat((x, x, x, x, x, x, x, x), 1)
+        x16 = torch.cat((x, x), 1)
         out = self.relu1(self.conv2(torch.add(out, x16)))
         return out
 
@@ -116,10 +116,10 @@ class OutputTransition(nn.Module):
     def __init__(self, inChans, elu, nll):
         super(OutputTransition, self).__init__()
         # self.pad = nn.ReplicationPad3d(2)
-        self.conv1 = nn.Conv3d(inChans, 2, kernel_size=5, padding=2)
-        self.bn1 = ContBatchNorm3d(2)
-        self.conv2 = nn.Conv3d(2, 1, kernel_size=1)
-        self.relu1 = ELUCons(elu, 2)
+        self.conv1 = nn.Conv3d(inChans, 4, kernel_size=5, padding=2)
+        self.bn1 = ContBatchNorm3d(4)
+        self.conv2 = nn.Conv3d(4, 4, kernel_size=1)
+        self.relu1 = ELUCons(elu, 4)
         # self.sigmoid = nn.Sigmoid()
         # self.thresh = nn.Threshold(0.5, 0)
         # if nll:

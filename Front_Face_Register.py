@@ -10,18 +10,18 @@ import torch
 import shutil
 import numpy as np
 from torch.autograd import Variable
-from CAMP.UnstructuredGridOperators import *
+from CAMP.camp.UnstructuredGridOperators import *
 import subprocess as sp
 import skimage.segmentation as seg
 
 from collections import OrderedDict
 import torch.optim as optim
 
-import CAMP.Core as core
-import CAMP.FileIO as io
-import CAMP.StructuredGridTools as st
-import CAMP.UnstructuredGridOperators as uo
-import CAMP.StructuredGridOperators as so
+import CAMP.camp.Core as core
+import CAMP.camp.FileIO as io
+import CAMP.camp.StructuredGridTools as st
+import CAMP.camp.UnstructuredGridOperators as uo
+import CAMP.camp.StructuredGridOperators as so
 
 import matplotlib
 matplotlib.use('qt5agg')
@@ -108,9 +108,9 @@ def front_face_register(tar_surface, src_surface, affine_lr=1.0e-06, translation
     return full_aff
 
 
-def front_face_stacking(rabbit):
+def front_face_stacking(rabbit, base_dir='/hdscratch/ucair/'):
 
-    rabbit_dir = f'/hdscratch/ucair/{rabbit}/blockface/'
+    rabbit_dir = f'{base_dir}{rabbit}/blockface/'
     raw_ext = '/surfaces/raw/'
     # rigid_ext = '/surfaces/rigid/'
     ff_ext = '/surfaces/frontface/'
@@ -122,7 +122,7 @@ def front_face_stacking(rabbit):
     block_list = sorted(glob.glob(f'{rabbit_dir}block*'))
 
     # Determine the middle block
-    middle_block = block_list[9]
+    middle_block = block_list[4]
     foot_blocks = block_list[block_list.index(middle_block):]
     head_blocks = block_list[:block_list.index(middle_block) + 1][::-1]
 
@@ -426,7 +426,8 @@ def front_face_stacking(rabbit):
 
 
 if __name__ == '__main__':
-    rabbit = '18_047'
+    rabbit = '18_062'
+    base_dir = '/hdscratch/ucair/'
     # process_mic(rabbit)
     # match_bf_mic()
-    front_face_stacking(rabbit)
+    front_face_stacking(rabbit, base_dir=base_dir)

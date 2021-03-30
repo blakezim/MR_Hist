@@ -34,3 +34,6 @@ VNet/slurm/
 VNet/slurm/*
 Histology/NNSeg/slurm
 Histology/NNSeg/slurm/*
+Histology/NNSeg/slurm/run.slurm
+Histology/NNSeg/model_weights
+Histology/NNSeg/model_weights/*

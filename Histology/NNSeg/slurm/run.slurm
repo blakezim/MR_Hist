@@ -13,4 +13,4 @@ type python
 
 echo "Running with GPU Index $CUDA_VISIBLE_DEVICES"
 
-python -u ../histology_seg.py  --threads 4 -r 400 --trainBatchSize 100 --inferBatchSize 64 --nEpochs 1000;
+python -u ../histology_seg.py  --threads 4 -r 200 --trainBatchSize 32 --inferBatchSize 32 --nEpochs 1000 --im_size 512;

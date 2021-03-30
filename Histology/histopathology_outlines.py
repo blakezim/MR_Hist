@@ -7,8 +7,8 @@ import numpy as np
 import matplotlib.colors
 import sklearn.mixture.gaussian_mixture as gmm
 
-import CAMP.Core as core
-import CAMP.FileIO as io
+import CAMP.camp.Core as core
+import CAMP.camp.FileIO as io
 
 import matplotlib
 matplotlib.use('qt5agg')
@@ -23,12 +23,14 @@ def draw_contours(rabbit):
     raw_mic_dir = f'/hdscratch/ucair/{rabbit}/microscopic/'
     block_list = sorted(glob.glob(f'{raw_mic_dir}/*'))
 
-    for block_path in block_list[6:]:
+    for block_path in block_list:
         block = block_path.split('/')[-1]
-        mic_list = sorted(glob.glob(f'{block_path}/raw/*_image.tif'))
+        mic_list = glob.glob(f'{block_path}/raw/*_image.tif')
+        mic_list += glob.glob(f'{block_path}/raw/*_image.jpg')
+        mic_list = sorted(mic_list)
         img_nums = [x.split('/')[-1].split('_')[1] for x in mic_list]
 
-        for img in img_nums[2:]:
+        for img in img_nums:
 
             mic_file = f'{raw_mic_dir}{block}/segmentations/IMG_{img}/img_{img}_color.nii.gz'
             healthy_file = f'{raw_mic_dir}{block}/segmentations/IMG_{img}/img_{img}_healthy_tissue.nrrd'
@@ -49,7 +51,7 @@ def draw_contours(rabbit):
             #     dtype=torch.float32,
             #     channels=3
             # )
-            save = False
+            save = True
             contour_width = 1.0
             mic = io.LoadITKFile(mic_file, device=device)
             parts = [io.LoadITKFile(healthy_file, device=device)]
@@ -101,5 +103,5 @@ def draw_contours(rabbit):
 
 
 if __name__ == '__main__':
-    rabbit = '18_047'
+    rabbit = '18_062'
     draw_contours(rabbit)

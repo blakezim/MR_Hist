@@ -31,7 +31,7 @@ plt.ion()
 def main(rabbit):
     import RabbitCommon as rc
 
-    in_path = f'/hdscratch/rabbit_data/{rabbit}/rawDicoms/ExVivo*/*'
+    in_path = f'/scratch/rabbit_data/{rabbit}/rawDicoms/ExVivo*/*'
     out_path = f'/hdscratch/ucair/{rabbit}/mri/exvivo/volumes/raw/'
     files = sorted(glob.glob(in_path))
 
@@ -51,7 +51,7 @@ def main(rabbit):
 
     # Copy over some of the 'invivo' (day3)
     out_path = f'/hdscratch/ucair/{rabbit}/mri/invivo/volumes/raw/'
-    in_path = f'/hdscratch/rabbit_data/{rabbit}/rawVolumes/Post*/*'
+    in_path = f'/scratch/rabbit_data/{rabbit}/rawVolumes/Post*/*'
     files = sorted(glob.glob(in_path))
     filt_files = [x for x in files if '3D_VIBE_0.5' in x]
     filt_files += [x for x in files if 't2' in x]
@@ -65,7 +65,7 @@ def main(rabbit):
 
     # Copy over some of the day0
     out_path = f'/hdscratch/ucair/{rabbit}/mri/day0/volumes/raw/'
-    in_path = f'/hdscratch/rabbit_data/{rabbit}/rawVolumes/Ablation*/*'
+    in_path = f'/scratch/rabbit_data/{rabbit}/rawVolumes/Ablation*/*'
     files = sorted(glob.glob(in_path))
     filt_files = [x for x in files if '3D_VIBE_0.5' in x]
     filt_files += [x for x in files if 't2' in x]
@@ -79,7 +79,5 @@ def main(rabbit):
 
 
 if __name__ == '__main__':
-    rabbit = '18_062'
-    # process_mic(rabbit)
-    # match_bf_mic()
+    rabbit = '18_061'
     main(rabbit)
